@@ -39,7 +39,7 @@ from monai.transforms import (
     ToTensord,
 )
 
-HT = 192
+HT = 192 #Hi
 DT = 16
 
 SP = 1.25
