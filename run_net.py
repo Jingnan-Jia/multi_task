@@ -134,6 +134,7 @@ def train(data_folder=".", model_folder="runs"):
 
     images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_folder, "*_seg.nii.gz")))
+
     logging.info(f"training: image/label ({len(images)}) folder: {data_folder}")
 
     amp = True  # auto. mixed precision
