@@ -11,7 +11,7 @@ parser.add_argument("--model_folder", type=str, default="models/ex_test", help="
 
 parser.add_argument("--patch_xy", type=int, default="192", help="patch size along x and y axis")
 parser.add_argument("--patch_z", type=int, default="16", help="patch size along z axis")
-parser.add_argument("--space_xy", type=int, default="1.25", help="spacing along x and y axis")
+parser.add_argument("--space_xy", type=float, default="1.25", help="spacing along x and y axis")
 parser.add_argument("--space_z", type=int, default="5", help="spacing along z axis")
 
 args = parser.parse_args()
