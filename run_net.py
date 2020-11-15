@@ -22,11 +22,13 @@ from ignite.contrib.handlers import ProgressBar
 from torch.autograd import Variable
 import torch.nn.functional as F
 from ignite.engine import Events
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from set_args import args
 
 import monai
-from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
+# from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
+from monai.handlers import StatsHandler, MeanDice, ValidationHandler
+from CheckpointSaver import CheckpointSaver
 from monai.transforms import (
     AddChanneld,
     AsDiscreted,
@@ -47,7 +49,7 @@ from monai.transforms import (
 WORKERS = 6
 
 # Writer will output to ./runs/ directory by default
-writer = SummaryWriter(args.model_folder)
+# writer = SummaryWriter(args.model_folder)
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
@@ -62,7 +64,7 @@ def get_xforms(mode="train", keys=("image", "label")):
     if mode == "train":
         xforms.extend(
             [
-                SpatialPadd(keys, spatial_size=(args.path_xy, args.path_xy, -1), mode="reflect"),  # ensure at least HTxHT
+                SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, -1), mode="reflect"),  # ensure at least HTxHT
                 RandAffined(
                     keys,
                     prob=0.15,
@@ -71,7 +73,7 @@ def get_xforms(mode="train", keys=("image", "label")):
                     mode=("bilinear", "nearest"),
                     as_tensor_output=False,
                 ),
-                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.path_xy, args.path_xy, args.path_z), num_samples=3),  # todo: num_samples
+                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), num_samples=3),  # todo: num_samples
                 RandGaussianNoised(keys[0], prob=0.15, std=0.01),
                 RandFlipd(keys, spatial_axis=0, prob=0.5),
                 RandFlipd(keys, spatial_axis=1, prob=0.5),
@@ -105,7 +107,7 @@ def get_net():
 def get_inferer(_mode=None):
     """returns a sliding window inference instance."""
 
-    patch_size = (args.path_xy, args.path_xy, args.path_z)
+    patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
     sw_batch_size, overlap = 2, 0.5  # todo: change overlap for inferer
     inferer = monai.inferers.SlidingWindowInferer(
         roi_size=patch_size,
@@ -260,7 +262,7 @@ def train(data_folder=".", model_folder="runs"):
         train_handlers=train_handlers,
         amp=amp,
     )
-    trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+    # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
 
     trainer.run()
 
