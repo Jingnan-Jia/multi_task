@@ -9,7 +9,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import argparse
 import glob
 import logging
 import os
@@ -20,6 +19,11 @@ import numpy as np
 import torch
 import torch.nn as nn
 from ignite.contrib.handlers import ProgressBar
+from torch.autograd import Variable
+import torch.nn.functional as F
+from ignite.engine import Events
+from torch.utils.tensorboard import SummaryWriter
+from set_args import args
 
 import monai
 from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -39,12 +43,11 @@ from monai.transforms import (
     ToTensord,
 )
 
-HT = 192 #Hi
-DT = 16
 
-SP = 1.25
-TK = 5
 WORKERS = 6
+
+# Writer will output to ./runs/ directory by default
+writer = SummaryWriter(args.model_folder)
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
@@ -53,13 +56,13 @@ def get_xforms(mode="train", keys=("image", "label")):
         LoadNiftid(keys),
         AddChanneld(keys),
         Orientationd(keys, axcodes="LPS"),
-        Spacingd(keys, pixdim=(SP, SP, TK), mode=("bilinear", "nearest")[: len(keys)]),
+        Spacingd(keys, pixdim=(args.space_xy, args.space_xy, args.space_z), mode=("bilinear", "nearest")[: len(keys)]),
         ScaleIntensityRanged(keys[0], a_min=-1000.0, a_max=500.0, b_min=0.0, b_max=1.0, clip=True),
     ]
     if mode == "train":
         xforms.extend(
             [
-                SpatialPadd(keys, spatial_size=(HT, HT, -1), mode="reflect"),  # ensure at least HTxHT
+                SpatialPadd(keys, spatial_size=(args.path_xy, args.path_xy, -1), mode="reflect"),  # ensure at least HTxHT
                 RandAffined(
                     keys,
                     prob=0.15,
@@ -68,7 +71,7 @@ def get_xforms(mode="train", keys=("image", "label")):
                     mode=("bilinear", "nearest"),
                     as_tensor_output=False,
                 ),
-                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(HT, HT, DT), num_samples=3),  # todo: num_samples
+                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.path_xy, args.path_xy, args.path_z), num_samples=3),  # todo: num_samples
                 RandGaussianNoised(keys[0], prob=0.15, std=0.01),
                 RandFlipd(keys, spatial_axis=0, prob=0.5),
                 RandFlipd(keys, spatial_axis=1, prob=0.5),
@@ -88,11 +91,12 @@ def get_net():
     """returns a unet model instance."""
 
     n_classes = 2
+    base = 1
     net = monai.networks.nets.BasicUNet(
         dimensions=3,
         in_channels=1,
         out_channels=n_classes,
-        features=(32, 32, 64, 128, 256, 32),  # todo: change features
+        features=(32*base, 32*base, 64*base, 128*base, 256*base, 32*base),  # todo: change features
         dropout=0.1,
     )
     return net
@@ -101,7 +105,7 @@ def get_net():
 def get_inferer(_mode=None):
     """returns a sliding window inference instance."""
 
-    patch_size = (HT, HT, DT)
+    patch_size = (args.path_xy, args.path_xy, args.path_z)
     sw_batch_size, overlap = 2, 0.5  # todo: change overlap for inferer
     inferer = monai.inferers.SlidingWindowInferer(
         roi_size=patch_size,
@@ -112,6 +116,44 @@ def get_inferer(_mode=None):
     )
     return inferer
 
+
+def one_hot_embedding(labels, num_classes):
+    '''Embedding labels to one-hot form.
+    Args:
+      labels: (LongTensor) class labels, sized [N,].
+      num_classes: (int) number of classes.
+    Returns:
+      (tensor) encoded labels, sized [N,#classes].
+    '''
+    y = torch.eye(num_classes)  # [D,D]
+    return y[labels]            # [N,D]
+
+
+class FocalLoss(nn.Module):
+    def __init__(self, num_classes=2):
+        super(FocalLoss, self).__init__()
+        self.num_classes = num_classes
+
+    def focal_loss(self, x, y):
+        '''Focal loss.
+        Args:
+          x: (tensor) sized [N,D].
+          y: (tensor) sized [N,].
+        Return:
+          (tensor) focal loss.
+        '''
+        alpha = 0.25
+        gamma = 2
+
+        t = one_hot_embedding(y.data.cpu(), 1+self.num_classes)  # [N,21]
+        t = t[:,1:]  # exclude background
+        t = Variable(t).cuda()  # [N,20]
+
+        p = x.sigmoid()
+        pt = p*t + (1-p)*(1-t)         # pt = p if t > 0 else 1-p
+        w = alpha*t + (1-alpha)*(1-t)  # w = alpha if t > 0 else 1-alpha
+        w = w * (1-pt).pow(gamma)
+        return F.binary_cross_entropy_with_logits(x, t, w, size_average=False)
 
 class DiceCELoss(nn.Module):
     """Dice and Xentropy loss"""
@@ -126,7 +168,10 @@ class DiceCELoss(nn.Module):
         # CrossEntropyLoss target needs to have shape (B, D, H, W)
         # Target from pipeline has shape (B, 1, D, H, W)
         cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
-        return dice + cross_entropy
+        return dice * dice + cross_entropy * cross_entropy
+
+def logfile():
+    print("my custom training handler")
 
 
 def train(data_folder=".", model_folder="runs"):
@@ -215,6 +260,8 @@ def train(data_folder=".", model_folder="runs"):
         train_handlers=train_handlers,
         amp=amp,
     )
+    trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+
     trainer.run()
 
 
@@ -286,18 +333,13 @@ def infer(data_folder=".", model_folder="runs", prediction_folder="output"):
 
 
 if __name__ == "__main__":
+
     """
     Usage:
         python run_net.py train --data_folder "COVID-19-20_v2/Train" # run the training pipeline
         python run_net.py infer --data_folder "COVID-19-20_v2/Validation" # run the inference pipeline
     """
-    parser = argparse.ArgumentParser(description="Run a basic UNet segmentation baseline.")
-    parser.add_argument(
-        "--mode", metavar="mode", default="train", choices=("train", "infer"), type=str, help="mode of workflow"
-    )
-    parser.add_argument("--data_folder", default="", type=str, help="training data folder")
-    parser.add_argument("--model_folder", default="runs_workers6_192_16", type=str, help="model folder")
-    args = parser.parse_args()
+
 
     monai.config.print_config()
     monai.utils.set_determinism(seed=0)

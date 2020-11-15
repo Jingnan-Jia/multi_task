@@ -9,5 +9,9 @@
 
 eval $(conda shell.bash hook)
 conda activate py37
-python run_net.py train --data_folder "COVID-19-20_v2/Train" --model_folder "runs_224_07"
+python run_net.py --mode "train" --data_folder "COVID-19-20_v2/Train" --model_folder "models/ex7"
+
+
+
+
 
