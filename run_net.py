@@ -131,6 +131,9 @@ def one_hot_embedding(labels, num_classes):
     y = torch.eye(num_classes)  # [D,D]
     return y[labels]            # [N,D]
 
+def save_args():
+    """ Save args files so that we know the specific setting of the model"""
+    copy2("set_args.py", args.model_folder+"/used_args.py")
 
 class FocalLoss(nn.Module):
     def __init__(self, num_classes=2):
@@ -171,7 +174,7 @@ class DiceCELoss(nn.Module):
         # CrossEntropyLoss target needs to have shape (B, D, H, W)
         # Target from pipeline has shape (B, 1, D, H, W)
         cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
-        return dice  + cross_entropy
+        return dice + cross_entropy
 
 def logfile():
     print("my custom training handler")
@@ -271,7 +274,7 @@ def train(data_folder="."):
 def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=False):
     """
     run inference, the output folder will be "./output"
-    :param write_pbb_maps:
+    :param write_pbb_maps: write probabilities maps to the disk for future boosting
     """
     ckpts = sorted(glob.glob(os.path.join(args.model_folder, "*.pt")))
     ckpt = ckpts[-1]
@@ -358,6 +361,7 @@ if __name__ == "__main__":
     logging.basicConfig(stream=sys.stdout, level=logging.INFO)
 
     if args.mode == "train":
+        save_args()
         data_folder = args.data_folder or os.path.join("COVID-19-20_v2", "Train")
         train(data_folder=data_folder)
     elif args.mode == "infer":
