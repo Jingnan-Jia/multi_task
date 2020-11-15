@@ -171,13 +171,13 @@ class DiceCELoss(nn.Module):
         # CrossEntropyLoss target needs to have shape (B, D, H, W)
         # Target from pipeline has shape (B, 1, D, H, W)
         cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
-        return dice * dice + cross_entropy * cross_entropy
+        return dice  + cross_entropy
 
 def logfile():
     print("my custom training handler")
 
 
-def train(data_folder=".", model_folder="runs"):
+def train(data_folder="."):
     """run a training pipeline."""
 
     images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
@@ -231,7 +231,7 @@ def train(data_folder=".", model_folder="runs"):
     )
     val_handlers = [
         ProgressBar(),
-        CheckpointSaver(save_dir=model_folder, save_dict={"net": net}, save_key_metric=True, key_metric_n_saved=3),
+        CheckpointSaver(save_dir=args.model_folder, save_dict={"net": net}, save_key_metric=True, key_metric_n_saved=3),
     ]
     evaluator = monai.engines.SupervisedEvaluator(
         device=device,
@@ -261,20 +261,19 @@ def train(data_folder=".", model_folder="runs"):
         inferer=get_inferer(),
         key_train_metric=None,
         train_handlers=train_handlers,
-        amp=amp,
-        logfile=args.model_folder,
+        amp=amp
     )
     # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
 
     trainer.run()
 
 
-def infer(data_folder=".", model_folder="runs", prediction_folder=args.result_folder, write_pbb_maps=False):
+def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=False):
     """
     run inference, the output folder will be "./output"
     :param write_pbb_maps:
     """
-    ckpts = sorted(glob.glob(os.path.join(model_folder, "*.pt")))
+    ckpts = sorted(glob.glob(os.path.join(args.model_folder, "*.pt")))
     ckpt = ckpts[-1]
     for x in ckpts:
         logging.info(f"available model file: {x}.")
