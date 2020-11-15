@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from ignite.engine import Events
 from torch.utils.tensorboard import SummaryWriter
 from set_args import args
+from monai.data.utils import create_file_basename
 
 import monai
 from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -44,7 +45,7 @@ from monai.transforms import (
 )
 
 
-WORKERS = 6
+train_workers = 6
 
 # Writer will output to ./runs/ directory by default
 writer = SummaryWriter(args.model_folder)
@@ -62,7 +63,7 @@ def get_xforms(mode="train", keys=("image", "label")):
     if mode == "train":
         xforms.extend(
             [
-                SpatialPadd(keys, spatial_size=(args.path_xy, args.path_xy, -1), mode="reflect"),  # ensure at least HTxHT
+                SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, -1), mode="reflect"),  # ensure at least HTxHT
                 RandAffined(
                     keys,
                     prob=0.15,
@@ -71,7 +72,7 @@ def get_xforms(mode="train", keys=("image", "label")):
                     mode=("bilinear", "nearest"),
                     as_tensor_output=False,
                 ),
-                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.path_xy, args.path_xy, args.path_z), num_samples=3),  # todo: num_samples
+                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), num_samples=3),  # todo: num_samples
                 RandGaussianNoised(keys[0], prob=0.15, std=0.01),
                 RandFlipd(keys, spatial_axis=0, prob=0.5),
                 RandFlipd(keys, spatial_axis=1, prob=0.5),
@@ -105,7 +106,7 @@ def get_net():
 def get_inferer(_mode=None):
     """returns a sliding window inference instance."""
 
-    patch_size = (args.path_xy, args.path_xy, args.path_z)
+    patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
     sw_batch_size, overlap = 2, 0.5  # todo: change overlap for inferer
     inferer = monai.inferers.SlidingWindowInferer(
         roi_size=patch_size,
@@ -201,7 +202,7 @@ def train(data_folder=".", model_folder="runs"):
         train_ds,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=WORKERS,
+        num_workers=train_workers,
         pin_memory=torch.cuda.is_available(),
     )
 
@@ -211,7 +212,7 @@ def train(data_folder=".", model_folder="runs"):
     val_loader = monai.data.DataLoader(
         val_ds,
         batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
-        num_workers=WORKERS,
+        num_workers=train_workers,
         pin_memory=torch.cuda.is_available(),
     )
 
@@ -259,15 +260,17 @@ def train(data_folder=".", model_folder="runs"):
         key_train_metric=None,
         train_handlers=train_handlers,
         amp=amp,
+        logfile=args.model_folder,
     )
     trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
 
     trainer.run()
 
 
-def infer(data_folder=".", model_folder="runs", prediction_folder="output"):
+def infer(data_folder=".", model_folder="runs", prediction_folder=args.result_folder, write_pbb_maps=False):
     """
     run inference, the output folder will be "./output"
+    :param write_pbb_maps:
     """
     ckpts = sorted(glob.glob(os.path.join(model_folder, "*.pt")))
     ckpt = ckpts[-1]
@@ -292,7 +295,7 @@ def infer(data_folder=".", model_folder="runs", prediction_folder="output"):
     infer_loader = monai.data.DataLoader(
         infer_ds,
         batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
-        num_workers=WORKERS,
+        num_workers=train_workers,
         pin_memory=torch.cuda.is_available(),
     )
 
@@ -315,6 +318,14 @@ def infer(data_folder=".", model_folder="runs", prediction_folder="output"):
                     preds = preds + pred
                     n = n + 1.0
             preds = preds / n
+            if write_pbb_maps:
+                # pass
+                filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
+                pbb_folder = prediction_folder + "/pbb_maps/"
+                npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
+                if not os.path.isdir(pbb_folder):
+                    os.makedirs(pbb_folder)
+                np.save(npy_name, preds.cpu())
             preds = (preds.argmax(dim=1, keepdims=True)).float()
             saver.save_batch(preds, infer_data["image_meta_dict"])
 
@@ -347,9 +358,9 @@ if __name__ == "__main__":
 
     if args.mode == "train":
         data_folder = args.data_folder or os.path.join("COVID-19-20_v2", "Train")
-        train(data_folder=data_folder, model_folder=args.model_folder)
+        train(data_folder=data_folder)
     elif args.mode == "infer":
         data_folder = args.data_folder or os.path.join("COVID-19-20_v2", "Validation")
-        infer(data_folder=data_folder, model_folder=args.model_folder)
+        infer(data_folder=data_folder, write_pbb_maps=True)
     else:
         raise ValueError("Unknown mode.")
