@@ -22,12 +22,14 @@ from ignite.contrib.handlers import ProgressBar
 from torch.autograd import Variable
 import torch.nn.functional as F
 from ignite.engine import Events
-from torch.utils.tensorboard import SummaryWriter
+# from torch.utils.tensorboard import SummaryWriter
 from set_args import args
 from monai.data.utils import create_file_basename
 
 import monai
-from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
+# from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
+from monai.handlers import StatsHandler, MeanDice, ValidationHandler
+from CheckpointSaver import CheckpointSaver
 from monai.transforms import (
     AddChanneld,
     AsDiscreted,
@@ -48,7 +50,7 @@ from monai.transforms import (
 train_workers = 6
 
 # Writer will output to ./runs/ directory by default
-writer = SummaryWriter(args.model_folder)
+# writer = SummaryWriter(args.model_folder)
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
@@ -262,7 +264,7 @@ def train(data_folder=".", model_folder="runs"):
         amp=amp,
         logfile=args.model_folder,
     )
-    trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+    # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
 
     trainer.run()
 
