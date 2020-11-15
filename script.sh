@@ -6,6 +6,8 @@
 #SBATCH --mem-per-gpu=90G
 #SBATCH --mail-type=end
 #SBATCH --mail-user=jiajingnan2222@gmail.com
+#SBATCH -e slurmlogs/slurm-%j.err
+#SBATCH -o slurmlogs/slurm-%j.out
 
 eval $(conda shell.bash hook)
 conda activate py37
