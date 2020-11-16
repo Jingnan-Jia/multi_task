@@ -14,6 +14,7 @@ import logging
 import os
 import shutil
 import sys
+from shutil import copy2
 
 import numpy as np
 import torch
@@ -47,7 +48,7 @@ from monai.transforms import (
 )
 
 
-train_workers = 6
+train_workers = 10
 
 # Writer will output to ./runs/ directory by default
 # writer = SummaryWriter(args.model_folder)
@@ -133,6 +134,8 @@ def one_hot_embedding(labels, num_classes):
 
 def save_args():
     """ Save args files so that we know the specific setting of the model"""
+    if not os.path.isdir(args.model_folder):
+        os.makedirs(args.model_folder)
     copy2("set_args.py", args.model_folder+"/used_args.py")
 
 class FocalLoss(nn.Module):
@@ -224,7 +227,11 @@ def train(data_folder="."):
     # create BasicUNet, DiceLoss and Adam optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = get_net().to(device)
-    max_epochs, lr, momentum = 500, 1e-4, 0.95
+    if args.ld_model:
+        ckpt = get_model_path(args.ld_model)
+        net.load_state_dict(torch.load(ckpt, map_location=device))
+        logging.info("successfully load model: " + ckpt)
+    max_epochs, lr, momentum = args.epochs, 1e-4, 0.95
     logging.info(f"epochs {max_epochs}, lr {lr}, momentum {momentum}")
     opt = torch.optim.Adam(net.parameters(), lr=lr)
 
@@ -251,7 +258,7 @@ def train(data_folder="."):
 
     # evaluator as an event handler of the trainer
     train_handlers = [
-        ValidationHandler(validator=evaluator, interval=1, epoch_level=True),
+        ValidationHandler(validator=evaluator, interval=3, epoch_level=True),
         StatsHandler(tag_name="train_loss", output_transform=lambda x: x["loss"]),
     ]
     trainer = monai.engines.SupervisedTrainer(
@@ -276,12 +283,7 @@ def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=
     run inference, the output folder will be "./output"
     :param write_pbb_maps: write probabilities maps to the disk for future boosting
     """
-    ckpts = sorted(glob.glob(os.path.join(args.model_folder, "*.pt")))
-    ckpt = ckpts[-1]
-    for x in ckpts:
-        logging.info(f"available model file: {x}.")
-    logging.info("----")
-    logging.info(f"using {ckpt}.")
+    ckpt = get_model_path(args.model_folder)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     net = get_net().to(device)
@@ -345,6 +347,16 @@ def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=
         to_name = os.path.join(submission_dir, new_name)
         shutil.copy(f, to_name)
     logging.info(f"predictions copied to {submission_dir}.")
+
+
+def get_model_path(model_folder):
+    ckpts = sorted(glob.glob(os.path.join(model_folder, "*.pt")))
+    ckpt = ckpts[-1]
+    for x in ckpts:
+        logging.info(f"available model file: {x}.")
+    logging.info("----")
+    logging.info(f"using {ckpt}.")
+    return ckpt
 
 
 if __name__ == "__main__":

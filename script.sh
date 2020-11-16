@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --partition=gpu-long
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-gpu=6
+#SBATCH --cpus-per-gpu=10
 #SBATCH -t 7-00:00:00
 #SBATCH --mem-per-gpu=90G
 #SBATCH --mail-type=end
@@ -11,7 +11,7 @@
 
 eval $(conda shell.bash hook)
 conda activate py37
-python run_net.py --mode "train" --data_folder "COVID-19-20_v2/Train" --model_folder "models/ex7"
+python run_net.py --mode "train"
 
 
 
