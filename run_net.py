@@ -26,6 +26,7 @@ from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from set_args import args
 from monai.data.utils import create_file_basename
+from get_unetpp import get_unetpp
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -46,9 +47,10 @@ from monai.transforms import (
     SpatialPadd,
     ToTensord,
 )
-
+from typing import Dict
 
 train_workers = 10
+
 
 # Writer will output to ./runs/ directory by default
 # writer = SummaryWriter(args.model_folder)
@@ -66,7 +68,8 @@ def get_xforms(mode="train", keys=("image", "label")):
     if mode == "train":
         xforms.extend(
             [
-                SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, -1), mode="reflect"),  # ensure at least HTxHT
+                SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, -1), mode="reflect"),
+                # ensure at least HTxHT
                 RandAffined(
                     keys,
                     prob=0.15,
@@ -75,11 +78,13 @@ def get_xforms(mode="train", keys=("image", "label")):
                     mode=("bilinear", "nearest"),
                     as_tensor_output=False,
                 ),
-                RandCropByPosNegLabeld(keys, label_key=keys[1], spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), num_samples=3),  # todo: num_samples
+                RandCropByPosNegLabeld(keys, label_key=keys[1],
+                                       spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), num_samples=3),
+                # todo: num_samples
                 RandGaussianNoised(keys[0], prob=0.15, std=0.01),
-                RandFlipd(keys, spatial_axis=0, prob=0.5),
-                RandFlipd(keys, spatial_axis=1, prob=0.5),
-                RandFlipd(keys, spatial_axis=2, prob=0.5),
+                # RandFlipd(keys, spatial_axis=0, prob=0.5),
+                # RandFlipd(keys, spatial_axis=1, prob=0.5),
+                # RandFlipd(keys, spatial_axis=2, prob=0.5),
             ]
         )
         dtype = (np.float32, np.uint8)
@@ -93,16 +98,25 @@ def get_xforms(mode="train", keys=("image", "label")):
 
 def get_net():
     """returns a unet model instance."""
-
     n_classes = 2
     base = 1
+    # net = monai.networks.nets.SegResNetVAE(
+    #     input_image_size=(args.patch_xy, args.patch_xy, args.patch_z),
+    #     spatial_dims=3,
+    #     init_filters=32,     # todo: could change to base
+    #     in_channels=1,
+    #     out_channels=n_classes,
+    #     dropout_prob=None
+    # )
+
     net = monai.networks.nets.BasicUNet(
         dimensions=3,
         in_channels=1,
         out_channels=n_classes,
-        features=(32*base, 32*base, 64*base, 128*base, 256*base, 32*base),  # todo: change features
+        features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),  # todo: change features
         dropout=0.1,
     )
+
     return net
 
 
@@ -110,7 +124,7 @@ def get_inferer(_mode=None):
     """returns a sliding window inference instance."""
 
     patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
-    sw_batch_size, overlap = 2, 0.5  # todo: change overlap for inferer
+    sw_batch_size, overlap = args.batch_size, 0.5  # todo: change overlap for inferer
     inferer = monai.inferers.SlidingWindowInferer(
         roi_size=patch_size,
         sw_batch_size=sw_batch_size,
@@ -130,39 +144,67 @@ def one_hot_embedding(labels, num_classes):
       (tensor) encoded labels, sized [N,#classes].
     '''
     y = torch.eye(num_classes)  # [D,D]
-    return y[labels]            # [N,D]
+    return y[labels]  # [N,D]
+
 
 def save_args():
     """ Save args files so that we know the specific setting of the model"""
     if not os.path.isdir(args.model_folder):
         os.makedirs(args.model_folder)
-    copy2("set_args.py", args.model_folder+"/used_args.py")
+    copy2("set_args.py", args.model_folder + "/used_args.py")
+
 
 class FocalLoss(nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, alpha=0.25, gamma=2, logits=False, reduce=True):
         super(FocalLoss, self).__init__()
-        self.num_classes = num_classes
+        self.alpha = alpha
+        self.gamma = gamma
+        self.logits = logits
+        self.reduce = reduce
+        self.num_classes = 2
 
-    def focal_loss(self, x, y):
-        '''Focal loss.
-        Args:
-          x: (tensor) sized [N,D].
-          y: (tensor) sized [N,].
-        Return:
-          (tensor) focal loss.
-        '''
-        alpha = 0.25
-        gamma = 2
+    def forward(self, inputs, targets):
+        inputs = one_hot_embedding(inputs.data.cpu(), self.num_classes)
+        inputs = Variable(inputs).cuda()  # [N,20]
 
-        t = one_hot_embedding(y.data.cpu(), 1+self.num_classes)  # [N,21]
-        t = t[:,1:]  # exclude background
-        t = Variable(t).cuda()  # [N,20]
+        if self.logits:
+            BCE_loss = F.binary_cross_entropy_with_logits(inputs, targets, reduce=False)
+        else:
+            BCE_loss = F.binary_cross_entropy(inputs, targets, reduce=False)
+        pt = torch.exp(-BCE_loss)
+        F_loss = self.alpha * (1 - pt) ** self.gamma * BCE_loss
 
-        p = x.sigmoid()
-        pt = p*t + (1-p)*(1-t)         # pt = p if t > 0 else 1-p
-        w = alpha*t + (1-alpha)*(1-t)  # w = alpha if t > 0 else 1-alpha
-        w = w * (1-pt).pow(gamma)
-        return F.binary_cross_entropy_with_logits(x, t, w, size_average=False)
+        if self.reduce:
+            return torch.mean(F_loss)
+        else:
+            return F_loss
+
+
+# class FocalLoss(nn.Module):
+#     def __init__(self, num_classes=2):
+#         super(FocalLoss, self).__init__()
+#         self.num_classes = num_classes
+#
+#     def focal_loss(self, x, y):
+#         '''Focal loss.
+#         Args:
+#           x: (tensor) sized [N,D].
+#           y: (tensor) sized [N,].
+#         Return:
+#           (tensor) focal loss.
+#         '''
+#         alpha = 0.25
+#         gamma = 2
+#
+#         t = one_hot_embedding(y.data.cpu(), 1+self.num_classes)  # [N,21]
+#         t = t[:,1:]  # exclude background
+#         t = Variable(t).cuda()  # [N,20]
+#
+#         p = x.sigmoid()
+#         pt = p*t + (1-p)*(1-t)         # pt = p if t > 0 else 1-p
+#         w = alpha*t + (1-alpha)*(1-t)  # w = alpha if t > 0 else 1-alpha
+#         w = w * (1-pt).pow(gamma)
+#         return F.binary_cross_entropy_with_logits(x, t, w, size_average=False)
 
 class DiceCELoss(nn.Module):
     """Dice and Xentropy loss"""
@@ -177,15 +219,18 @@ class DiceCELoss(nn.Module):
         # CrossEntropyLoss target needs to have shape (B, D, H, W)
         # Target from pipeline has shape (B, 1, D, H, W)
         cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
+        print(f"dice: {dice}, CE: {cross_entropy}")
         return dice + cross_entropy
 
-def logfile():
-    print("my custom training handler")
+
+def get_loss(task):
+    if task == "recon":
+        return nn.MSE
+    else:
+        return DiceCELoss
 
 
-def train(data_folder="."):
-    """run a training pipeline."""
-
+def dataloader(task):
     images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_folder, "*_seg.nii.gz")))
 
@@ -202,13 +247,77 @@ def train(data_folder="."):
     val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(images[-n_val:], labels[-n_val:])]
 
     # create a training data loader
-    batch_size = 2
-    logging.info(f"batch size {batch_size}")
+    logging.info(f"batch size {args.batch_size}")
     train_transforms = get_xforms("train", keys)
     train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms)
     train_loader = monai.data.DataLoader(
         train_ds,
-        batch_size=batch_size,
+        batch_size=args.batch_size,
+        shuffle=True,
+        num_workers=train_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+
+    # create a validation data loader
+    val_transforms = get_xforms("val", keys)
+    val_ds = monai.data.CacheDataset(data=val_files, transform=val_transforms)
+    val_loader = monai.data.DataLoader(
+        val_ds,
+        batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
+        num_workers=train_workers,
+        pin_memory=torch.cuda.is_available(),
+    )
+    return train_loader, val_loader
+
+
+def train(data_folder="."):
+    """run a training pipeline."""
+
+    images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
+    labels = sorted(glob.glob(os.path.join(data_folder, "*_seg.nii.gz")))
+
+    logging.info(f"training: image/label ({len(images)}) folder: {data_folder}")
+
+    amp = True  # auto. mixed precision
+    keys = ("image", "label")
+
+    train_frac, val_frac = 0.8, 0.2
+    n_train = int(train_frac * len(images)) + 1
+    n_val = min(len(images) - n_train, int(val_frac * len(images)))
+    logging.info(f"training: train {n_train} val {n_val}, folder: {data_folder}")
+    if args.boost_5:
+        train_frac, val_frac = 0.8, 0.2
+        n_train = int(train_frac * len(images)) + 1
+        n_val = min(len(images) - n_train, int(val_frac * len(images)))
+        logging.info(f"training: train {n_train} val {n_val}, folder: {data_folder}")
+
+        if args.boost_5 == 1:
+            images_valid, labels_valid = images[-n_val:], labels[-n_val:]
+        elif args.boost_5 == 2:
+            images_valid, labels_valid = images[-2*n_val:-n_val], labels[-2*n_val:-n_val]
+        elif args.boost_5 == 3:
+            images_valid, labels_valid = images[-3*n_val:-2*n_val], labels[-3*n_val:-2*n_val]
+        elif args.boost_5 == 4:
+            images_valid, labels_valid = images[-4*n_val:-3*n_val], labels[-4*n_val:-3*n_val]
+        elif args.boost_5 == 5:
+            images_valid, labels_valid = images[-5*n_val:-4*n_val], labels[-5*n_val:-4*n_val]
+        else:
+            raise Exception('wrong args.boost_5')
+
+    images_train = sorted(list(set(images) - set(images_valid)))
+    labels_train = sorted(list(set(labels) - set(labels_valid)))
+
+
+    train_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(images_train, labels_train)]
+    val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(images_valid, labels_valid)]
+
+    # create a training data loader
+    logging.info(f"batch size {args.batch_size}")
+    train_transforms = get_xforms("train", keys)
+    train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms)
+    train_loader = monai.data.DataLoader(
+        train_ds,
+        batch_size=args.batch_size,
         shuffle=True,
         num_workers=train_workers,
         pin_memory=torch.cuda.is_available(),
@@ -231,9 +340,6 @@ def train(data_folder="."):
         ckpt = get_model_path(args.ld_model)
         net.load_state_dict(torch.load(ckpt, map_location=device))
         logging.info("successfully load model: " + ckpt)
-    max_epochs, lr, momentum = args.epochs, 1e-4, 0.95
-    logging.info(f"epochs {max_epochs}, lr {lr}, momentum {momentum}")
-    opt = torch.optim.Adam(net.parameters(), lr=lr)
 
     # create evaluator (to be used to measure model quality during training
     val_post_transform = monai.transforms.Compose(
@@ -241,7 +347,8 @@ def train(data_folder="."):
     )
     val_handlers = [
         ProgressBar(),
-        CheckpointSaver(save_dir=args.model_folder, save_dict={"net": net}, save_key_metric=True, key_metric_n_saved=3),
+        CheckpointSaver(save_dir=args.model_folder, save_dict={"net": net}, save_key_metric=True,
+                        key_metric_n_saved=3),
     ]
     evaluator = monai.engines.SupervisedEvaluator(
         device=device,
@@ -257,25 +364,33 @@ def train(data_folder="."):
     )
 
     # evaluator as an event handler of the trainer
-    train_handlers = [
-        ValidationHandler(validator=evaluator, interval=3, epoch_level=True),
-        StatsHandler(tag_name="train_loss", output_transform=lambda x: x["loss"]),
-    ]
-    trainer = monai.engines.SupervisedTrainer(
-        device=device,
-        max_epochs=max_epochs,
-        train_data_loader=train_loader,
-        network=net,
-        optimizer=opt,
-        loss_function=DiceCELoss(),
-        inferer=get_inferer(),
-        key_train_metric=None,
-        train_handlers=train_handlers,
-        amp=amp
-    )
-    # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+    epochs = [int(args.epochs * 0.8), int(args.epochs * 0.2)]
+    intervals = [10, 1]
+    lrs = [1e-3, 1e-4]
+    momentum = 0.95
+    for epoch, interval, lr in zip(epochs, intervals, lrs):  # big interval to save time, then small interval refine
+        logging.info(f"epochs {epoch}, lr {lr}, momentum {momentum}, interval {interval}")
+        opt = torch.optim.Adam(net.parameters(), lr=lr)
+        train_handlers = [
+            ValidationHandler(validator=evaluator, interval=interval, epoch_level=True),
+            StatsHandler(tag_name="train_loss", output_transform=lambda x: x["loss"]),
+        ]
+        trainer = monai.engines.SupervisedTrainer(
+            device=device,
+            max_epochs=epoch,
+            train_data_loader=train_loader,
+            network=net,
+            optimizer=opt,
+            loss_function=DiceCELoss(),
+            inferer=get_inferer(),
+            key_train_metric=None,
+            train_handlers=train_handlers,
+            amp=amp
+        )
 
-    trainer.run()
+        # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+
+        trainer.run()
 
 
 def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=False):
@@ -291,7 +406,8 @@ def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=
     net.eval()
 
     image_folder = os.path.abspath(data_folder)
-    images = sorted(glob.glob(os.path.join(image_folder, "*_ct.nii.gz")))
+
+    images = sorted(glob.glob(os.path.join(image_folder, "*.nii.gz")))
     logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
     infer_files = [{"image": img} for img in images]
 
@@ -342,7 +458,7 @@ def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=
     files = glob.glob(os.path.join(prediction_folder, "volume*", "*.nii.gz"))
     for f in files:
         new_name = os.path.basename(f)
-        new_name = new_name[len("volume-covid19-A-0") :]
+        new_name = new_name[len("volume-covid19-A-0"):]
         new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
         to_name = os.path.join(submission_dir, new_name)
         shutil.copy(f, to_name)
@@ -366,7 +482,6 @@ if __name__ == "__main__":
         python run_net.py train --data_folder "COVID-19-20_v2/Train" # run the training pipeline
         python run_net.py infer --data_folder "COVID-19-20_v2/Validation" # run the inference pipeline
     """
-
 
     monai.config.print_config()
     monai.utils.set_determinism(seed=0)

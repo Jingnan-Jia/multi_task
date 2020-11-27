@@ -124,6 +124,7 @@ class CheckpointSaver:
                 if isinstance(key_metric_name, str):
                     metric_name = key_metric_name
                 elif hasattr(engine.state, "key_metric_name") and isinstance(engine.state.key_metric_name, str):
+                    print("keymetricname:", engine.state.key_metric_name)
                     metric_name = engine.state.key_metric_name
                 else:
                     raise ValueError(
@@ -134,7 +135,7 @@ class CheckpointSaver:
                 if os.path.exists(val_log_dir):
                     val_log = np.genfromtxt(val_log_dir, dtype='str', delimiter=',')
                 else:
-                    val_log = ['epoch', 'val_loss']
+                    val_log = ['epoch', 'val_dice']
                 val_log = np.vstack([val_log, [engine.state.epoch, round(engine.state.metrics[metric_name], 4)]])
                 np.savetxt(val_log_dir, val_log, fmt='%s', delimiter=',')
 
