@@ -22,7 +22,6 @@ import torch.nn.functional as F
 from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from monai.data.utils import create_file_basename
-from get_unetpp import get_unetpp
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -92,65 +91,42 @@ def get_mtnet(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, in
                 n_classes=len(label),
                 base=base
             )
+        elif "resnet" in net_name:
+            net = monai.networks.nets.SegResNet(
+                init_filters=32 * args.base,  # todo: could change to base
+                out_channels=len(label),
+                dropout_prob=0.1
+        )
+        elif "vae" in net_name or "VAE" in net_name:  # vae as the reconnet
+            net = monai.networks.nets.SegResNetVAE(
+                input_image_size=(args.patch_xy, args.patch_xy, args.patch_z),
+                spatial_dims=3,
+                init_filters=32 * args.base,  # todo: could change to base
+                in_channels=1,
+                out_channels=len(label),
+                dropout_prob=0.1
+            )
         elif net_name == "net_recon":  # reconstruction
             dec = DecoderRec(features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
                              dropout=0.1)
             net = EnsembleEncRec(enc, dec)
         else:  # segmentation output different channels
             if "itgt" in net_name:  # 2 outputs: pred and rec_loss
-                print("itgt net")
-                if "vae" in net_name or "VAE" in net_name:  # vae as the reconnet
-                    print("vae net")
-                    net = monai.networks.nets.SegResNetVAE(
-                        input_image_size=(args.patch_xy, args.patch_xy, args.patch_z),
-                        spatial_dims=3,
-                        init_filters=32 * args.base,  # todo: could change to base
-                        in_channels=1,
-                        out_channels=len(label),
-                        dropout_prob=0.1
-                    )
-                elif "resnet" in net_name:
-                    
-                    net = monai.networks.nets.SegResNet(
-                        init_filters=32 * args.base,  # todo: could change to base
-                        out_channels=len(label),
-                        dropout_prob=0.1
-                    )
-                else:
-                    dec = DecoderSegRec(out_channels=len(label),
-                                        features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
-                                        dropout=0.1, )
-                    net = EnsembleEncSeg(enc, dec)
-
-                    # pass
-                    # net = ItgtSegRec()  # todo: Seg_net and Rec_net are iteragrated
+                dec = DecoderSegRec(out_channels=len(label),
+                                    features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
+                                    dropout=0.1, )
+                net = EnsembleEncSeg(enc, dec)
             else:
                 dec = DecoderSeg(out_channels=len(label),
                                  features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
-                                 dropout=0.1,
-                                 ds=netname_ds_dict[net_name])
+                                 dropout=0.1)
                 net = EnsembleEncSeg(enc, dec)
         # net = get_net()
-
+        print(net)
         nets[net_name] = net
 
     return nets
 
-
-# class Diceloss(torch.nn.Module):
-#     def init(self):
-#         super().init()
-#
-#     def forward(self, pred, target):
-#         if pred.shape != target.shape:  # do one_hot_encoding
-#
-#         smooth = 1.
-#         iflat = pred.contiguous().view(-1)
-#         tflat = target.contiguous().view(-1)
-#         intersection = (iflat * tflat).sum()
-#         A_sum = torch.sum(iflat * iflat)
-#         B_sum = torch.sum(tflat * tflat)
-#         return 1 - ((2. * intersection + smooth) / (A_sum + B_sum + smooth))
 
 def get_net():
     """returns a unet model instance."""
@@ -414,7 +390,7 @@ class TaskArgs(CommonTask):
             self.n_val: int = 2
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
-            # self.n_val: int = 5
+            self.n_val: int = 5
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -535,21 +511,23 @@ class TaskArgs(CommonTask):
                 if "vae" in self.net_name or "VAE" in self.net_name:
                     pred, rec_loss = self.net(x)
                     loss = self.criteria(pred, y) + rec_loss
-                
+
                 else:
                     pred, pred_rec = self.net(x)
                     loss = self.criteria(pred, y) + F.mse_loss(pred_rec, x)
             else:
-                if self.ds:
-                    pred, pred1, pred2 = self.net(x)
-                    loss = self.criteria(pred, y)
-                    loss1 = self.criteria(pred1, y)
-                    loss2 = self.criteria(pred2, y)
-                    print(f"loss: {loss}, loss1: {loss1},loss2: {loss2},")
-                    loss = 0.5 * loss + 0.25 * loss1 + 0.25 * loss2
-                else:
-                    pred = self.net(x)
-                    loss = self.criteria(pred, y)
+                pred = self.net(x)
+                loss = self.criteria(pred, y)
+                # if self.ds:
+                #     pred, pred1, pred2 = self.net(x)
+                #     loss = self.criteria(pred, y)
+                #     loss1 = self.criteria(pred1, y)
+                #     loss2 = self.criteria(pred2, y)
+                #     print(f"loss: {loss}, loss1: {loss1},loss2: {loss2},")
+                #     loss = 0.5 * loss + 0.25 * loss1 + 0.25 * loss2
+                # else:
+                    
+
 
         self.opt.zero_grad()
         self.current_loss = loss.item()

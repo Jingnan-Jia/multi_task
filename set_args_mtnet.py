@@ -12,9 +12,9 @@ parser = argparse.ArgumentParser(description="Run multi-task UNet segmentation."
 
 # model_choices = ["net_lobe", "net_vessel", "net_recon", "net_lesion"]
 parser.add_argument('--mode', choices=("train", "infer"), help='main model ', type=str, default='train')
-parser.add_argument('--train_mode', choices=("stepbystep", "onetime"), help='main model ', type=str, default='stepbystep')
-parser.add_argument('--net_names', help='model names', type=str, default='net_lesion_resnet')
-parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lesion_resnet')
+parser.add_argument('--train_mode', choices=("stepbystep", "onetime"), help='main model ', type=str, default='onetime')
+parser.add_argument('--net_names', help='model names', type=str, default='net_lesion')
+parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lesion')
 parser.add_argument('--pps', help='patches_per_scan', type=int, default=4)
 parser.add_argument('--batch_size', help='batch_size', type=int, default=1)
 parser.add_argument('--base', help='base', type=int, default=1)
@@ -40,7 +40,7 @@ parser.add_argument('-lr_rc', '--lr_rc', type=float, default=0.00001)
 
 
 # Number of Deep Supervisors
-parser.add_argument('--ds_ls', type=int, default=2)
+parser.add_argument('--ds_ls', type=int, default=0)
 parser.add_argument('--ds_lb', type=int, default=0)
 parser.add_argument('--ds_vs', type=int, default=0)
 parser.add_argument('--ds_aw', type=int, default=0)
@@ -56,7 +56,7 @@ parser.add_argument('--tsp_lu', type=str, default='0.77_5')
 parser.add_argument('--tsp_rc', type=str, default='0.77_5')
 
 # number of training images, 0 means "all"
-parser.add_argument('--tr_nb_ls', type=int, default=0)
+parser.add_argument('--tr_nb_ls', type=int, default=10)
 parser.add_argument('--tr_nb_lb', type=int, default=0)
 parser.add_argument('--tr_nb_vs', type=int, default=0)
 parser.add_argument('--tr_nb_aw', type=int, default=0)

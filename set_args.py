@@ -3,7 +3,7 @@
 # @Author  : Jingnan
 # @Email   : jiajingnan2222@gmail.com
 import argparse
-ex_id = '14'
+ex_id = '13'
 ex_dir = "ex"+str(ex_id)
 
 parser = argparse.ArgumentParser(description="Run a basic UNet segmentation baseline.")

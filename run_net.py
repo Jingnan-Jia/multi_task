@@ -26,7 +26,6 @@ from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from set_args import args
 from monai.data.utils import create_file_basename
-from get_unetpp import get_unetpp
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
