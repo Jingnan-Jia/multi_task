@@ -8,11 +8,16 @@ import logging
 import os
 import shutil
 import sys
+import multiprocessing
 from shutil import copy2
 from typing import Type
 from shutil import copy2
 import time
+import threading
 
+from queue import Queue
+import random
+import copy
 import numpy as np
 import torch
 import torch.nn as nn
@@ -22,6 +27,7 @@ import torch.nn.functional as F
 from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from monai.data.utils import create_file_basename
+from statistics import mean
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -35,6 +41,7 @@ from monai.transforms import (
     Orientationd,
     RandAffined,
     RandCropByPosNegLabeld,
+    RandSpatialCropd,
     RandFlipd,
     RandGaussianNoised,
     ScaleIntensityRanged,
@@ -50,17 +57,41 @@ if __name__ == '__main__':
     from taskargs import CommonTask
     from set_args_mtnet import args
     from unet_att_dsv import unet_CT_single_att_dsv_3D
+    from saharnet import Saharnet_decoder, Saharnet_encoder
+    from Generic_UNetPlusPlus import Generic_UNetPlusPlus
+
 else:
     from .mypath import Mypath
     from .custom_net import Encoder, DecoderRec, DecoderSeg, EnsembleEncRec, EnsembleEncSeg, DecoderSegRec
     from .taskargs import CommonTask
     from .set_args_mtnet import args
     from .unet_att_dsv import unet_CT_single_att_dsv_3D
+    from .saharnet import Saharnet_decoder, Saharnet_encoder
+    from .Generic_UNetPlusPlus import Generic_UNetPlusPlus
 
 import jjnutils.util as cu
 from typing import (Dict, List, Tuple, Set, Deque, NamedTuple, IO, Pattern, Match, Text,
                     Optional, Sequence, Union, TypeVar, Iterable, Mapping, MutableMapping, Any)
 import csv
+from torchsummary import summary
+
+
+def model_summary(model, model_name):
+    print(f"=================model_summary: {model_name}==================")
+    # model_parameters = [layer for layer in model.parameters() if layer.requires_grad]
+    model_parameters = filter(lambda p: p.requires_grad, model.parameters())
+    params = sum([np.prod(p.size()) for p in model_parameters])
+    print(f"Total Params:{params}")
+    print("=" * 100)
+    
+    # total_params = 0
+    # for name, param in model.named_parameters():
+    #     if param.requires_grad:
+    #         p = np.prod(param.shape)
+    #         print(name, p)
+    #         total_params+=p
+    # print("=" * 100)
+    # print(f"Total Params:{total_params}")
 
 
 class DiceCELoss(nn.Module):
@@ -68,7 +99,7 @@ class DiceCELoss(nn.Module):
 
     def __init__(self):
         super().__init__()
-        self.dice = monai.losses.DiceLoss(include_background=False, to_onehot_y=True, softmax=True)
+        self.dice = monai.losses.DiceLoss(include_background=True, to_onehot_y=True, softmax=True)
         self.cross_entropy = nn.CrossEntropyLoss()
 
     def forward(self, y_pred, y_true):
@@ -83,9 +114,17 @@ class DiceCELoss(nn.Module):
 def get_mtnet(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, int], base: int = 1) -> Dict[
     str, nn.Module]:
     nets = {}
-    enc = Encoder(features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base), dropout=0.1)
     for net_name, label in netname_label_dict.items():
-        if net_name == "net_lesion_att_unet":
+        if "saharnet" in net_name:
+            sahar_flag = True
+        else:
+            sahar_flag = False
+    if sahar_flag:
+        enc = Saharnet_encoder()
+    else:
+        enc = Encoder(features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base), dropout=0.1)
+    for net_name, label in netname_label_dict.items():
+        if "att_unet" in net_name:
             net = unet_CT_single_att_dsv_3D(
                 in_channels=1,
                 n_classes=len(label),
@@ -96,7 +135,9 @@ def get_mtnet(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, in
                 init_filters=32 * args.base,  # todo: could change to base
                 out_channels=len(label),
                 dropout_prob=0.1
-        )
+            )
+        elif "unetpp" in net_name:
+            net = Generic_UNetPlusPlus(1, args.base * 32, len(label), 5)
         elif "vae" in net_name or "VAE" in net_name:  # vae as the reconnet
             net = monai.networks.nets.SegResNetVAE(
                 input_image_size=(args.patch_xy, args.patch_xy, args.patch_z),
@@ -117,12 +158,17 @@ def get_mtnet(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, in
                                     dropout=0.1, )
                 net = EnsembleEncSeg(enc, dec)
             else:
-                dec = DecoderSeg(out_channels=len(label),
-                                 features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
-                                 dropout=0.1)
+                if sahar_flag:
+                    dec = Saharnet_decoder(out_channels=len(label))
+                else:
+                    dec = DecoderSeg(out_channels=len(label),
+                                     features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base),
+                                     dropout=0.1,
+                                     ds=netname_ds_dict[net_name])
                 net = EnsembleEncSeg(enc, dec)
         # net = get_net()
-        print(net)
+        # print(net)
+        model_summary(net, model_name=net_name)
         nets[net_name] = net
 
     return nets
@@ -241,22 +287,227 @@ class FocalLoss(nn.Module):
 def get_loss(task: str) -> Type[nn.Module]:
     loss_fun: Type[nn.Module]
     if task == "recon":
-        loss_fun = nn.MSELoss
+        loss_fun = nn.MSELoss()  # do not forget parenthesis
     else:
-        loss_fun = DiceCELoss  # or FocalLoss
+        loss_fun = DiceCELoss()  # or FocalLoss
     return loss_fun
 
+class FluentDataloader():
+    def __init__(self, dataloader, dataloader2, keys):
+        self.dataloader = dataloader
+        self.dataloader2 = dataloader2
+        self.keys = keys
+        self.data_q = Queue(maxsize=10)
+        self.data_q2 = Queue(maxsize=10)
 
-def inifite_generator(dataloader):
+
+    def start_dataloader(self, dl, q):
+        # dl = iter(dl)
+        while True:
+            print("start true")
+            # # for data in dl:
+            # try:
+            #     data = next(dl)
+            # except StopIteration:
+            #     dl = iter(dl)
+            #     data = next(dl)
+            for data in dl:
+                x_pps = data[self.keys[0]]
+                y_pps = data[self.keys[1]]
+                for x, y in zip(x_pps, y_pps):
+                    print("start put")
+                    x = x[None, ...]
+                    y = y[None, ...]
+                    data_single = (x, y)
+                    if q == 1:
+                        self.data_q.put(data_single)
+                        print(f"data_q's valuable data: {self.data_q.qsize()}")
+                    else:
+                        self.data_q2.put(data_single)
+                        print(f"data_q2's valuable data: {self.data_q2.qsize()}")
+                    print("self.data_q in subprocess", self.data_q)
+                    print("self.data_q2 in subprocess", self.data_q2)
+                    # time.sleep(60)
+
+    def run(self):
+        p1 = threading.Thread(target=self.start_dataloader, args=(self.dataloader, 1,))
+        p2 = threading.Thread(target=self.start_dataloader, args=(self.dataloader, 2,))
+
+
+        # p1 = multiprocessing.Process(target=self.start_dataloader, args=(self.dataloader, 1,))
+        # p2 = multiprocessing.Process(target=self.start_dataloader, args=(self.dataloader2, 2,))
+        p1.start()
+        p2.start()
+
+        use_q2 = False
+        print("self.data_q", self.data_q)
+        print("self.data_q2", self.data_q2)
+        count = 0
+        while True:
+            # time.sleep(10)
+            if len(self.keys) == 2:
+                # if count<15:
+                #     print(f"data_q.size: {self.data_q.qsize()}")
+                #     print(f"data_q2.size: {self.data_q2.qsize()}")
+                #     count+=1
+                if self.data_q.qsize() > 0 or self.data_q2.qsize() > 0:
+                    print('self.data_q.size', self.data_q.qsize())
+                    if self.data_q.empty() or use_q2:
+                        q = self.data_q2
+                        use_q2 = True
+                    else:
+                        q = self.data_q
+                        use_q2 = False
+                else:
+                    continue
+                # if data_q.empty() and data_q2.empty():
+                #     # print('empty')
+                #     continue
+                # else:
+
+                data = q.get(timeout=100)
+                print('get data successfully')
+                yield data
+
+
+def singlethread_ds(dl):
     keys = ("image", "label")
     while True:
-        for data in dataloader:
+        for data in dl:
             x_pps = data[keys[0]]
             y_pps = data[keys[1]]
             for x, y in zip(x_pps, y_pps):
+                print("start put by single thread, not fluent thread")
                 x = x[None, ...]
                 y = y[None, ...]
-                yield x, y
+                data_single = (x, y)
+                yield data_single
+
+def inifite_generator(dataloader, dataloader2=None, keys = ("image", "label")):
+    if args.fluent_ds:
+        fluent_dl = FluentDataloader(dataloader, dataloader2, keys)
+        return fluent_dl.run()
+    else:
+        return singlethread_ds(dataloader)
+
+    # # dataloader2 = copy.deepcopy(dataloader)
+    # dataloader = iter(dataloader)
+    # dataloader2 = iter(dataloader2)
+    # d = next(dataloader)
+    # data_queue = []
+    #
+    #
+    # data_q = Queue(maxsize=10)
+    # data_q2 = Queue(maxsize=10)
+    #
+    # def start_dataloader(dl, q):
+    #     while True:
+    #         print("start true")
+    #         # for data in dl:
+    #         try:
+    #             data = next(dl)
+    #         except StopIteration:
+    #             data = next(dl)
+    #         x_pps = data[keys[0]]
+    #         y_pps = data[keys[1]]
+    #         for x, y in zip(x_pps, y_pps):
+    #             print("start put")
+    #             x = x[None, ...]
+    #             y = y[None, ...]
+    #             data = (x, y)
+    #             if q==1:
+    #                 data_q.put(data)
+    #                 print(f"data_q's valuable data: {data_q.qsize()}")
+    #             else:
+    #                 data_q2.put(data)
+    #                 print(f"data_q2's valuable data: {data_q2.qsize()}")
+    #
+    # p1 = multiprocessing.Process(target=start_dataloader, args=(dataloader, 1, ))
+    # p2 = multiprocessing.Process(target=start_dataloader, args=(dataloader2, 2, ))
+    # p1.start()
+    # p2.start()
+    #
+    # use_q2 = False
+    # while True:
+    #     if len(keys)==2:
+    #         print(f"data_q.size: {data_q.qsize()}")
+    #         print(f"data_q2.size: {data_q2.qsize()}")
+    #         if data_q.qsize()>0 or data_q2.qsize()>0:
+    #             if data_q.empty() or use_q2:
+    #                 q = data_q2
+    #                 use_q2 = True
+    #             else:
+    #                 q = data_q
+    #                 use_q2 = False
+    #         else:
+    #             continue
+    #         # if data_q.empty() and data_q2.empty():
+    #         #     # print('empty')
+    #         #     continue
+    #         # else:
+    #
+    #         data = q.get(timeout=100)
+    #         yield data
+    #     else:
+    #         for data in dataloader:
+    #             x_pps = data[keys[0]]
+    #             for x in x_pps:
+    #                 x = x[None, ...]
+    #                 yield x
+
+
+
+def get_loss_of_multi_output(x, y, net, criteria, amp=True):
+    if amp:
+        with torch.cuda.amp.autocast():
+            preds = net(x)  # tuple
+            losses = [criteria(pred, y) for pred in preds]
+            # print(f"losses: {losses}")
+            loss = 0.5 * losses[0] + 0.5 * torch.mean(torch.stack(losses[1:]))
+            # print(f"weighted loss: {loss}")
+            # pred0, pred1, pred2 = net(x)
+            # loss0 = criteria(pred0, y)
+            # loss1 = criteria(pred1, y)
+            # loss2 = criteria(pred2, y)
+            # print(f"loss: {loss0}, loss1: {loss1},loss2: {loss2},")
+            # loss = 0.5 * loss0 + 0.25 * loss1 + 0.25 * loss2
+    else:
+        preds = net(x)  # tuple
+        losses = [criteria(pred, y) for pred in preds]
+        # print(f"losses: {losses}")
+        loss = 0.5 * losses[0] + 0.5 * torch.mean(torch.stack(losses[1:]))
+        # print(f"weighted loss: {loss}")
+        #
+        # pred0, pred1, pred2 = net(x)
+        # loss0 = criteria(pred0, y)
+        # loss1 = criteria(pred1, y)
+        # loss2 = criteria(pred2, y)
+        # print(f"loss: {loss0}, loss1: {loss1},loss2: {loss2},")
+        # loss = 0.5 * loss0 + 0.25 * loss1 + 0.25 * loss2
+    return loss
+
+
+def get_loss_of_1_output(x, y, net, criteria, amp=True):
+    if amp:
+        with torch.cuda.amp.autocast():
+            pred = net(x)
+            loss = criteria(pred, y)
+    else:
+        pred = net(x)
+        loss = criteria(pred, y)
+
+    return loss
+
+
+def get_loss_of_seg_rec(x, y, net, criteria, amp=True):
+    if amp:
+        with torch.cuda.amp.autocast():
+            pred, pred_rec = net(x)
+            loss = criteria(pred, y) + F.mse_loss(pred_rec, x)
+    else:
+        pred, pred_rec = net(x)
+        loss = criteria(pred, y) + F.mse_loss(pred_rec, x)
+    return loss
 
 
 class TaskArgs(CommonTask):
@@ -275,17 +526,20 @@ class TaskArgs(CommonTask):
                  ):
         super().__init__()  # set self.device and self.amp
         self.task: str = task
+        self.main_task = None
         self.labels: List[int] = labels
         self.net_name: str = net_name
         self.net: nn.Module = all_nets[net_name]
         self.net.to(self.device)
         self.ld_name: str = ld_name
         self.tr_nb: Union[int] = tr_nb
+        self.tr_nb_cache: int = 20
         self.ds: int = ds
         self.tsp_xy = float(tsp.split("_")[0])
         self.tsp_z = float(tsp.split("_")[1])
         self.sub_dir = sub_dir
         self.load_workers = 6
+        self.scaler = torch.cuda.amp.GradScaler()
 
         self.lr: float = lr
         self.main_net_name: str = main_net_name
@@ -304,20 +558,40 @@ class TaskArgs(CommonTask):
 
         # if args.mode=="train":
         self.tra_loader, self.val_loader = self.dataloader()
-        self.tra_gen = inifite_generator(self.tra_loader)
-        self.val_gen = inifite_generator(self.val_loader)
+        if args.fluent_ds:
+            self.tra_loader2 = self.dataloader(require_val=False) # do not second need val data
+            self.tra_gen = inifite_generator(self.tra_loader, self.tra_loader2)
+        else:
+            self.tra_gen = inifite_generator(self.tra_loader)
 
         self.loss_fun = get_loss(task)
         self.opt = torch.optim.Adam(self.net.parameters(), lr=self.lr)
-        self.criteria = self.loss_fun()
+
+        # self.main_net_enc_grad = [layer.grad for layer in self.net.enc]
+        # self.main_net_enc_grad_norm = [torch.norm(grad) for grad in self.main_net_enc_grad]
+        self.criteria = self.loss_fun
         self.accumulate_loss: float = 0.0
         self.current_loss: float = 100.0
         self.steps_per_epoch = self.n_train * args.pps
 
         self.evaluator = self.get_evaluator()
-        if args.mode == "infer" or "semibyaug" in self.net_name:
-            self.infer_loader = self.get_infer_loader()
+        if args.mode == "infer":
+            self.infer_loader = self.get_infer_loader(transformmode="infer")
+        elif "yichao" in self.net_name:
+            self.infer_loader = self.get_infer_loader(transformmode="infer_patches")
+            self.ini_loader = inifite_generator(self.infer_loader, keys=("image",))
         copy2("set_args_mtnet.py", self.mypath.args_fpath())  # save super parameters
+
+    def get_enc_parameters(self):
+        enc_parameters = {}
+        enc_gradients = {}
+        for name, param in self.net.enc.named_parameters():
+            if param.requires_grad:
+                enc_parameters[name] = param
+                enc_gradients[name] = param.grad
+        return enc_parameters, enc_gradients
+
+
 
     def get_xforms(self, mode: str = "train", keys=("image", "label")):
         """returns a composed transform for train/val/infer."""
@@ -354,6 +628,28 @@ class TaskArgs(CommonTask):
             dtype = (np.float32, np.uint8)
         elif mode == "val":
             dtype = (np.float32, np.uint8)
+        elif mode == "infer_patches":
+            keys = ("image")
+            xforms.extend(
+                [
+                    SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), mode="minimum"),
+                    # ensure at least HTxHT*z
+                    RandAffined(
+                        keys,
+                        prob=0.3,
+                        rotate_range=(-0.1, 0.1),
+                        scale_range=(-0.1, 0.1),
+                        mode=("bilinear",),
+                        as_tensor_output=False,
+                    ),
+                    RandSpatialCropd(keys, 
+                                     roi_size=(args.patch_xy, args.patch_xy, args.patch_z),
+                                     random_center=True,
+                                     random_size=False), 
+                    RandGaussianNoised(keys, prob=0.5, std=0.01),
+                ]
+            )
+            dtype = (np.float32,)
         elif mode == "infer":
             dtype = (np.float32,)
         else:
@@ -370,10 +666,43 @@ class TaskArgs(CommonTask):
     #               ToTensord(keys)
     #               ]
 
+    def norm_enc_gradients(self):
+        self.target_enc_grad_norm = {name:norm * args.ratio_norm_gradients
+                                     for name, norm in self.main_task.enc_grad_norm.items()}
+        self.ratio_norm = {name:self.target_enc_grad_norm[name] / norm for name, norm in self.enc_grad_norm.items()}
+
+        for name, parameter in self.net.enc.named_parameters():
+            # print("before norm, grad.norm", torch.norm(parameter.grad))
+            parameter.grad *= self.ratio_norm[name]
+            # print("after norm, grad.norm", torch.norm(parameter.grad))
+
+            # self.net.enc.named_parameters()[name].grad *= ratio
+            # self.enc_parameters[name] *= ratio
+
+
+    def update_gradients(self, loss, amp):
+        self.opt.zero_grad()
+        if amp:
+            self.scaler.scale(loss).backward()
+        else:
+            loss.backward()
+        t = time.time()
+        self.enc_parameters, self.enc_gradients = self.get_enc_parameters()
+        self.enc_grad_norm = {name: torch.norm(gradient) for name, gradient in self.enc_gradients.items()}
+        if args.ratio_norm_gradients and self.net_name != self.main_net_name:
+            self.norm_enc_gradients()
+        # print(f"update gradients cost time: {time.time()-t}")
+
+        if amp:
+            self.scaler.step(self.opt)
+            self.scaler.update()
+        else:
+            self.opt.step()
+
     def get_file_names(self):
         keys = ("image", "label")
-        # data_dir = self.mypath.data_dir()
-        data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
+        data_dir = self.mypath.data_dir()
+        # data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
         print(data_dir)
         ct_names: List[str] = cu.get_all_ct_names(data_dir, name_suffix="_ct")
         if self.task != "recon":
@@ -390,7 +719,7 @@ class TaskArgs(CommonTask):
             self.n_val: int = 2
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
-            self.n_val: int = 5
+            # self.n_val: int = 5
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -399,24 +728,24 @@ class TaskArgs(CommonTask):
         val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(ct_names[-self.n_val:], gdth_names[-self.n_val:])]
         return train_files, val_files
 
-    def dataloader(self):
+    def dataloader(self, require_val=True):
         ct_name_list: List[str]
         gdth_name_list: List[str]
         train_files, val_files = self.get_file_names()
 
         train_transforms = self.get_xforms("train")
-        if args.smartcache or self.n_train > 200:
-            if args.smartcache:
-                self.cache_num = min(args.smartcache, self.n_train - 1)
-            else:
-                self.cache_num = 40
+        if args.smartcache or self.n_train > self.tr_nb_cache:
+            # if args.smartcache:
+            self.cache_num = min(self.tr_nb_cache, self.n_train - 1)
+            # else:
+            #     self.cache_num = self.tr_nb_cache
             # cache_num must be smaller than dataset length to support replacement.
             self.train_ds = monai.data.SmartCacheDataset(data=train_files,
                                                          transform=train_transforms,
-                                                         replace_rate=0.1,
+                                                         replace_rate=1,
                                                          cache_num=self.cache_num,
                                                          num_init_workers=5,
-                                                         num_replace_workers=self.load_workers
+                                                         num_replace_workers=self.load_workers,
                                                          )
         else:
             self.train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms,
@@ -427,22 +756,32 @@ class TaskArgs(CommonTask):
             batch_size=args.batch_size,
             shuffle=True,
             num_workers=self.load_workers,
-            pin_memory=torch.cuda.is_available(),
+            # pin_memory=torch.cuda.is_available(),
+            pin_memory=False,
+            persistent_workers=True,
+
         )
-        if args.smartcache or self.n_train > 200:
+        if args.smartcache or self.n_train > self.tr_nb_cache:
             self.train_ds.start()  # need it if SmartCacheDataset
 
-        # create a validation data loader
-        val_transforms = self.get_xforms("val")
-        val_ds = monai.data.CacheDataset(data=val_files, transform=val_transforms, num_workers=self.load_workers)
-        val_loader = monai.data.DataLoader(
-            val_ds,
-            batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
-            num_workers=self.load_workers,
-            pin_memory=torch.cuda.is_available(),
-        )
+        if not require_val:
+            return train_loader
+        else:
+            # create a validation data loader
+            val_transforms = self.get_xforms("val")
+            val_ds = monai.data.CacheDataset(data=val_files, transform=val_transforms, num_workers=self.load_workers)
+            val_loader = monai.data.DataLoader(
+                val_ds,
+                batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
+                num_workers=self.load_workers,
+                # pin_memory=torch.cuda.is_available(),
+                pin_memory=False,
+                persistent_workers=True,
 
-        return train_loader, val_loader
+            )
+            return train_loader, val_loader
+
+
 
     def get_evaluator(self):
         keys = ("pred", "label")
@@ -474,66 +813,79 @@ class TaskArgs(CommonTask):
         return evaluator
 
     def run_one_step(self, net_ta_dict, idx: int):
+        self.net.train()
         t1 = time.time()
-        x, y = next(self.tra_gen)
-        t3 = time.time()
-        print(f"load data cost time: {t3 - t1}")
-        if self.task == "recon":
-            y = x
-        x = x.to(self.device)
-        y = y.to(self.device)
-        # print(x.shape)
-        with torch.cuda.amp.autocast():
-            self.net.train()
-            if "semibyaug" in self.net_name:
-                x = next(self.infer_loader)
-                y = self.net(x)  # now we have x and its gdth: y
-                x = x.to("cpu")
-                y = y.to("cpu")
-                x_Affined, y_Affined = cu.random_transform(x, y,
-                                                           rotation_range=0.1,
-                                                           height_shift_range=0.1,
-                                                           width_shift_range=0.1,
-                                                           shear_range=0.1,
-                                                           fill_mode='constant',
-                                                           zoom_range=0.2,
-                                                           prob=1)
-                if random.random() > 0.5:
-                    noise = np.random.normal(0, 0.25, x_Affined.shape)
-                    x_Affined += noise
-                x_Affined = x_Affined.to(self.device)
-                y_Affined = y_Affined.to(self.device)
-                pred = self.net(x_Affined)
-                loss = self.criteria(pred, y_Affined)
+        if "yichao" in self.net_name:
+            print("yichao's net")
+            x = next(self.ini_loader)
+            print(f"x.shape: {x.shape}")
+            t3 = time.time()
+            # print(f"load data cost time: {t3 - t1}")
+            x = x.to(self.device)
+            y = self.net(x)  # now we have x and its gdth: y
 
-            elif "itgt" in self.net_name:
+            t4 = time.time()
+            print(f"forward data cost time: {t4 - t3}")
+            x = x.to("cpu")
+            if len(y) > 1:
+                y = y[0]
+            y = torch.argmax(y, dim=1)  # one hot decoding
+            y = torch.unsqueeze(y, dim=1)
+
+            y = y.to("cpu")
+            print(f"y.shape: {y.shape}")
+            x_Affined, y_Affined = cu.random_transform(x, y,
+                                                       rotation_range=0.1,
+                                                       height_shift_range=0.1,
+                                                       width_shift_range=0.1,
+                                                       shear_range=0.1,
+                                                       fill_mode='constant',
+                                                       zoom_range=0.2,
+                                                       prob=1)
+            if random.random() > 0.5:
+                noise = np.random.normal(0, 0.25, x_Affined.shape)
+                x_Affined += noise
+            x_Affined = x_Affined.to(self.device)
+            y_Affined = y_Affined.to(self.device)
+            x_Affined = x_Affined.float()
+            y_Affined = y_Affined.float()
+
+            t5 = time.time()
+            print(f"transform data cost time: {t5 - t4}")
+
+            pred = self.net(x_Affined)
+            if len(pred) > 1:
+                pred = pred[0]
+            print(f"pred.shape: {pred.shape}, y_Affined.shape: {y_Affined.shape}")
+            loss = self.criteria(pred, y_Affined)
+        else:
+            
+            x, y = next(self.tra_gen)
+            t3 = time.time()
+            # print(f"load data cost time: {t3 - t1}")
+            if self.task == "recon":
+                y = x
+            x = x.to(self.device)
+            y = y.to(self.device)
+
+            if "itgt" in self.net_name:
                 print("self.netname", self.net_name)
                 if "vae" in self.net_name or "VAE" in self.net_name:
                     pred, rec_loss = self.net(x)
                     loss = self.criteria(pred, y) + rec_loss
-
                 else:
-                    pred, pred_rec = self.net(x)
-                    loss = self.criteria(pred, y) + F.mse_loss(pred_rec, x)
+                    loss = get_loss_of_seg_rec(x, y, self.net, self.criteria, args.amp)
             else:
-                pred = self.net(x)
-                loss = self.criteria(pred, y)
-                # if self.ds:
-                #     pred, pred1, pred2 = self.net(x)
-                #     loss = self.criteria(pred, y)
-                #     loss1 = self.criteria(pred1, y)
-                #     loss2 = self.criteria(pred2, y)
-                #     print(f"loss: {loss}, loss1: {loss1},loss2: {loss2},")
-                #     loss = 0.5 * loss + 0.25 * loss1 + 0.25 * loss2
-                # else:
-                    
-
-
-        self.opt.zero_grad()
-        self.current_loss = loss.item()
+                if (self.ds and "recon" not in self.net_name) or "unetpp" in self.net_name:
+                    loss = get_loss_of_multi_output(x, y, self.net, self.criteria, args.amp)
+                else:
+                    loss = get_loss_of_1_output(x, y, self.net, self.criteria, args.amp)
         t8 = time.time()
-        loss.backward()
-        self.opt.step()
+        self.update_gradients(loss, args.amp)
+
+        self.current_loss = loss.item()
+        
+        # for
         t2 = time.time()
         print(f"load data cost time {t3 - t1}, one step backward training cost time: {t2 - t8}")
         if args.ad_lr and self.main_net_name != self.net_name:  # reset lr for aux nets
@@ -541,10 +893,10 @@ class TaskArgs(CommonTask):
             self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
             print(f"task: {self.task}, lr: {lr}")
         print(f"task: {self.task}, loss: {loss.item()}")
-        if (args.smartcache or self.n_train > 200) and (idx % (self.cache_num * args.pps)) == 0:
+        if (args.smartcache or self.n_train > self.tr_nb_cache) and (idx % (self.cache_num * args.pps)) == 0:
             print(f"start update cache for task {self.task}")
             self.train_ds.update_cache()
-        if (args.smartcache or self.n_train > 200) and idx == args.step_nb - 1:
+        if (args.smartcache or self.n_train > self.tr_nb_cache) and idx == args.step_nb - 1:
             train_ds.shutdown()
 
         # print statistics
@@ -564,7 +916,7 @@ class TaskArgs(CommonTask):
     def run_all_epochs(self):
         # evaluator as an event handler of the trainer
         # epochs = [int(args.epochs * 0.8), int(args.epochs * 0.2)]
-        epochs = [400, 100]
+        epochs = [200, 100]
         intervals = [1, 1]
         lrs = [1e-3, 1e-4]
         momentum = 0.95
@@ -600,24 +952,24 @@ class TaskArgs(CommonTask):
 
         if idx_ % valid_period == 0:
             print("start do validation")
-            if self.net_name != "net_recon":
+            if "net_recon" not in self.net_name:
                 self.evaluator.run()
 
-    def get_infer_loader(self):
+    def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
-
         images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
         logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
         infer_files = [{"image": img} for img in images]
 
         keys = ("image",)
-        infer_transforms = self.get_xforms("infer", keys)
+        infer_transforms = self.get_xforms(transformmode, keys)
         infer_ds = monai.data.Dataset(data=infer_files, transform=infer_transforms)
         infer_loader = monai.data.DataLoader(
             infer_ds,
             batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
             num_workers=self.load_workers,
             pin_memory=torch.cuda.is_available(),
+            persistent_workers=False,
         )
 
         return infer_loader
@@ -627,38 +979,40 @@ class TaskArgs(CommonTask):
         run inference, the output folder will be "./output"
         :param write_pbb_maps: write probabilities maps to the disk for future boosting
         """
+        print("start infer")
         keys = ("image",)
         self.net.eval()
-        prediction_folder = self.mypath.infer_pred_dir(self.ld_name)
-        inferer = get_inferer()
-        saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
-        with torch.no_grad():
-            for infer_data in self.infer_loader:
-                logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
-                preds = inferer(infer_data[keys[0]].to(self.device), self.net)
-                n = 1.0
-                for _ in range(4):
-                    # test time augmentations
-                    _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
-                    pred = inferer(_img.to(self.device), self.net)
-                    preds = preds + pred
-                    n = n + 1.0
-                    for dims in [[2], [3]]:
-                        flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
-                        pred = torch.flip(flip_pred, dims=dims)
-                        preds = preds + pred
-                        n = n + 1.0
-                preds = preds / n
-                if write_pbb_maps:
-                    # pass
-                    filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
-                    pbb_folder = prediction_folder + "/pbb_maps/"
-                    npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
-                    if not os.path.isdir(pbb_folder):
-                        os.makedirs(pbb_folder)
-                    np.save(npy_name, preds.cpu())
-                preds = (preds.argmax(dim=1, keepdims=True)).float()
-                saver.save_batch(preds, infer_data["image_meta_dict"])
+        prediction_folder = self.mypath.infer_pred_dir(self.ld_name) + "/" + args.infer_data_dir.split("/")[-1]
+        print(prediction_folder)
+        # saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
+        # with torch.no_grad():
+        #     for infer_data in self.infer_loader:
+        #         logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
+        #         print(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
+        #         preds = inferer(infer_data[keys[0]].to(self.device), self.net)
+        #         n = 1.0
+        #         for _ in range(4):
+        #             # test time augmentations
+        #             _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
+        #             pred = inferer(_img.to(self.device), self.net)
+        #             preds = preds + pred
+        #             n = n + 1.0
+        #             for dims in [[2], [3]]:
+        #                 flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
+        #                 pred = torch.flip(flip_pred, dims=dims)
+        #                 preds = preds + pred
+        #                 n = n + 1.0
+        #         preds = preds / n
+        #         if write_pbb_maps:
+        #             # pass
+        #             filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
+        #             pbb_folder = prediction_folder + "/pbb_maps/"
+        #             npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
+        #             if not os.path.isdir(pbb_folder):
+        #                 os.makedirs(pbb_folder)
+        #             np.save(npy_name, preds.cpu())
+        #         preds = (preds.argmax(dim=1, keepdims=True)).float()
+        #         saver.save_batch(preds, infer_data["image_meta_dict"])
 
         # copy the saved segmentations into the required folder structure for submission
         submission_dir = os.path.join(prediction_folder, "to_submit")
@@ -671,10 +1025,19 @@ class TaskArgs(CommonTask):
             new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
             to_name = os.path.join(submission_dir, new_name)
             shutil.copy(f, to_name)
+
+        files = glob.glob(os.path.join(prediction_folder, "COVID-19-AR-*", "*.nii.gz"))
+        for f in files:
+            new_name = os.path.basename(f)
+            new_name = new_name[len("COVID-19-AR-"):]
+            new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
+            to_name = os.path.join(submission_dir, new_name)
+            shutil.copy(f, to_name)
+
         logging.info(f"predictions copied to {submission_dir}.")
         if "lung" in self.net_name:
             import find_connect_parts as ff
-            ff.write_connected_lobes(preds_dir, workers=5, target_dir=preds_dir + "/biggest_5")
+            ff.write_connected_lobes(preds_dir, workers=5, target_dir=preds_dir + "/biggest_parts")
 
 
 def get_netname_ta_dict(netname_label_dict: Dict[str, List],
@@ -769,6 +1132,9 @@ def get_netname_ta_dict(netname_label_dict: Dict[str, List],
             raise Exception(f"net name {net_name} is not correct")
         ta_dict[net_name] = ta
 
+    for net_name, ta in ta_dict.items():
+        ta.main_task = ta_dict[args.main_net_name]
+
     return ta_dict
 
 
@@ -835,6 +1201,31 @@ def train_mtnet():
                 for ta in tr_tas:
                     ta.run_one_step(net_ta_dict, idx_)
                     ta.do_vilidation_if_need(net_ta_dict, idx_)
+
+
+
+                    task = net_ta_dict["net_lesion"]
+                    net_w = task.net.enc.down_3.convs.conv_1.conv.weight
+                    net_grad = net_w.grad
+                    try:
+                        # print(f"net_w: {net_w[0][0][0][0]}; net_grad: {net_grad[0][0][0][0]}")
+                        norm_grad_csv = ta.mypath.task_log_dir + "/" + ta.mypath.str_name + "grad.csv"
+                        if not os.path.isfile(norm_grad_csv):
+                            with open(norm_grad_csv, "a") as f:
+                                writer = csv.writer(f, delimiter=',')
+                                l = ["net_name", "net_w", "net_grad", "net_w_norm", "net_grad_norm"]
+                                writer.writerow(l)
+                        with open(norm_grad_csv, "a") as f:
+                            writer = csv.writer(f, delimiter=',')
+                            l = [ta.net_name, net_w[0][0][0][0], net_grad[0][0][0][0], torch.norm(net_w).item(), torch.norm(net_grad).item()]
+                            writer.writerow(l)
+                    except:
+                        pass
+                        # print(f"net_w.shape: {net_w.shape}; net_grad.shape: {net_grad.shape}")
+
+                    # print(f"net_w_norm: {torch.norm(net_w).item()}; net_grad_norm: {torch.norm(net_grad).item()}")
+
+
         else:
             tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, 0)
             for ta in tr_tas:
