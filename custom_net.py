@@ -64,7 +64,7 @@ class Encoder(nn.Module):
             in_channels: int = 1,
             features: Sequence[int] = (32, 32, 64, 128, 256, 32),
             act: Union[str, tuple] = ("LeakyReLU", {"negative_slope": 0.1, "inplace": True}),
-            norm: Union[str, tuple] = ("instance", {"affine": True}),
+            norm: Union[str, tuple] = ("batch", {"affine": True}),
             dropout: Union[float, tuple] = 0.0,
     ):
         """
@@ -210,7 +210,7 @@ class DecoderSegRec(nn.Module):
         self.up_1 = Up(dimensions, fea[1], fea[5], act, norm, dropout, upsample, halves=False)
 
         self.final_conv = Conv["conv", dimensions](fea[5], out_channels, kernel_size=1)
-        self.final_conv1 = Conv["conv", dimensions](fea[5], out_channels, kernel_size=1)
+        self.final_conv1 = Conv["conv", dimensions](fea[5], 2, kernel_size=1)
 
     def forward(self,
                 x0: torch.Tensor,
@@ -260,6 +260,7 @@ class DecoderSeg(nn.Module):
             norm: Union[str, tuple] = ("instance", {"affine": True}),
             dropout: Union[float, tuple] = 0.0,
             upsample: str = "deconv",
+            ds: int = 0,
     ):
         """
         A UNet implementation with 1D/2D/3D supports.
@@ -304,6 +305,7 @@ class DecoderSeg(nn.Module):
 
         """
         super().__init__()
+        self.ds = ds
         fea = ensure_tuple_rep(features, 6)
         print(f"BasicUNet features: {fea}.")
 
@@ -313,6 +315,15 @@ class DecoderSeg(nn.Module):
         self.upcat_1 = UpCat(dimensions, fea[1], fea[0], fea[5], act, norm, dropout, upsample, halves=False)
 
         self.final_conv = Conv["conv", dimensions](fea[5], out_channels, kernel_size=1)
+
+        # the following operations are for deep supervision
+        self.up_4 = Up(dimensions, fea[4], fea[3], act, norm, dropout, upsample)
+        self.up_3 = Up(dimensions, fea[3], fea[2], act, norm, dropout, upsample)
+        self.up_2 = Up(dimensions, fea[2], fea[1], act, norm, dropout, upsample)
+        self.up_1 = Up(dimensions, fea[1], fea[5], act, norm, dropout, upsample, halves=False)
+        self.up_1_1 = Up(dimensions, fea[1], fea[5], act, norm, dropout, upsample, halves=False)
+        self.final_conv1 = Conv["conv", dimensions](fea[5], out_channels, kernel_size=1)
+        self.final_conv2 = Conv["conv", dimensions](fea[5], out_channels, kernel_size=1)
 
 
     def forward(self,
@@ -339,6 +350,15 @@ class DecoderSeg(nn.Module):
         u1 = self.upcat_1(u2, x0)
 
         u_out = self.final_conv(u1)
+        if self.training and self.ds == 2:
+            u_out1 = self.final_conv1(self.up_1(self.up_2(u3)))
+            u_out2 = self.final_conv2(self.up_1_1(u2))
+            # loss = self.criteria(pred, u_out)
+            # loss1 = self.criteria(pred1, u_out1)
+            # loss2 = self.criteria(pred2, u_out2)
+            # loss = 0.5 * loss + 0.25 * loss1 + 0.25 * loss2
+
+            return u_out, u_out1, u_out2
 
         return u_out
 
@@ -436,8 +456,9 @@ class EnsembleEncSeg(nn.Module):
         self.dec = dec
 
     def forward(self, x):
-        x0, x1, x2, x3, x4 = self.enc(x)
-        out = self.dec(x0, x1, x2, x3, x4)
+        # x0, x1, x2, x3, x4 = self.enc(x)
+        outputs = self.enc(x)
+        out = self.dec(*outputs)
 
         return out
 
