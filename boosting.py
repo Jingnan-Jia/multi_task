@@ -27,7 +27,7 @@ from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from set_args import args
 from monai.data.utils import create_file_basename
-from get_unetpp import get_unetpp
+# from get_unetpp import get_unetpp
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
@@ -49,6 +49,7 @@ from monai.transforms import (
     ToTensord,
 )
 from typing import Dict
+
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
@@ -90,8 +91,9 @@ def get_xforms(mode="train", keys=("image", "label")):
     xforms.extend([CastToTyped(keys, dtype=dtype), ToTensord(keys)])
     return monai.transforms.Compose(xforms)
 
+
 def get_infer_loader():
-    data_folder=('/data/jjia/monai/COVID-19-20_v2/Validation')
+    data_folder = ('/data/jjia/monai/COVID-19-20_v2/Validation')
     images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
     logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
     infer_files = [{"image": img} for img in images]
@@ -108,6 +110,7 @@ def get_infer_loader():
 
     return infer_loader
 
+
 def get_inferer():
     """returns a sliding window inference instance."""
 
@@ -123,13 +126,28 @@ def get_inferer():
     return inferer
 
 
-dest_folder = "results/boosting/ex10_14"
+dest_folder = "results/boosting/all"
 if not os.path.isdir(dest_folder):
     os.makedirs(dest_folder)
 saver = monai.data.NiftiSaver(output_dir=dest_folder, mode="nearest")  # todo: change mode
 
 pbb_folder_base = "results/ex"
 pbb_folders = [pbb_folder_base + str(i) + "/pbb_maps" for i in [10, 11, 12, 13, 14]]
+
+pbb_folders = [
+    "results/ex2_0/pbb_maps",
+    # "results/ex3/pbb_maps",
+    "results/ex3_0/pbb_maps",
+    "results/ex4/pbb_maps",
+    "results/ex10/pbb_maps",
+    "results/ex11/pbb_maps",
+    "results/ex12/pbb_maps",
+    "results/ex13/pbb_maps",
+    "results/ex14/pbb_maps",
+    "models/lesion/1606762775_273/infer_pred/pbb_maps",
+    "models/lesion/1606762984_399/infer_pred/pbb_maps",
+    "models/lesion/1606769290_556/infer_pred/pbb_maps",
+]
 
 data_folder = "COVID-19-20_v2/Validation"
 images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
@@ -160,9 +178,8 @@ for npy_name, img_name, infer_data in zip(pbb_npy_names, images_names, infer_loa
     pbb_ave = torch.from_numpy(pbb_ave)
     preds = (pbb_ave.argmax(dim=1, keepdims=True)).float()
 
-    saver.save_batch(preds, infer_data["image_meta_dict"] )
+    saver.save_batch(preds, infer_data["image_meta_dict"])
     print(f"save {img_name} successfully")
-
 
 # copy the saved segmentations into the required folder structure for submission
 submission_dir = os.path.join(dest_folder, "to_submit")
