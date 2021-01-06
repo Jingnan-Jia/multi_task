@@ -130,6 +130,7 @@ class Mypath(object):
 
     def infer_pred_dir(self, current_time=None):
         task_model_dir = self.task_model_dir(current_time)
+        print(f"infer results are saved at {task_model_dir+'/infer_pred'}")
         return task_model_dir+"/infer_pred"
         
 
