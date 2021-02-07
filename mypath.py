@@ -42,7 +42,7 @@ class Mypath(object):
     'file_name' to respresent the file name in the parent directory.
     """
 
-    def __init__(self, task, current_time=None):
+    def __init__(self, task, current_time=None, data_path='data_ori_space'):
 
         """
         initial valuables.
@@ -55,7 +55,7 @@ class Mypath(object):
         self.dir_path = os.path.dirname(os.path.realpath(__file__))  # abosolute path of the current .py file
         self.model_path = os.path.join(self.dir_path, 'models')
         self.log_path = os.path.join(self.dir_path, 'logs')
-        self.data_path = os.path.join(self.dir_path, 'data_xy77_z5')
+        self.data_path = os.path.join(self.dir_path, data_path)  # data_xy77_z5 or data_ori_space
         self.results_path = os.path.join(self.dir_path, 'results')
 
         if current_time:

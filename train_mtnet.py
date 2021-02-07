@@ -28,16 +28,20 @@ from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
 from monai.data.utils import create_file_basename
 from statistics import mean
+import seg_metrics.seg_metrics as sg
+from myutil.myutil import get_all_ct_names
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-from monai.handlers import StatsHandler, MeanDice, ValidationHandler
-from CheckpointSaver import CheckpointSaver
+from monai.handlers import CheckpointSaver, StatsHandler, MeanDice, ValidationHandler
+# from CheckpointSaver import CheckpointSaver
+from monai.data.image_reader import NibabelReader, ITKReader
 from monai.transforms import (
     AddChanneld,
     AsDiscreted,
     CastToTyped,
     LoadNiftid,
+    LoadImaged, # to replace LoadNiftid for .mhd file
     Orientationd,
     RandAffined,
     RandCropByPosNegLabeld,
@@ -50,6 +54,8 @@ from monai.transforms import (
     ToTensord,
 )
 from typing import Dict
+from monai.data.dataset import Dataset
+
 
 if __name__ == '__main__':
     from mypath import Mypath
@@ -59,6 +65,7 @@ if __name__ == '__main__':
     from unet_att_dsv import unet_CT_single_att_dsv_3D
     from saharnet import Saharnet_decoder, Saharnet_encoder
     from Generic_UNetPlusPlus import Generic_UNetPlusPlus
+    # from find_connect_parts import write_connected_lobes
 
 else:
     from .mypath import Mypath
@@ -68,6 +75,7 @@ else:
     from .unet_att_dsv import unet_CT_single_att_dsv_3D
     from .saharnet import Saharnet_decoder, Saharnet_encoder
     from .Generic_UNetPlusPlus import Generic_UNetPlusPlus
+    # from .find_connect_parts import write_connected_lobes
 
 import jjnutils.util as cu
 from typing import (Dict, List, Tuple, Set, Deque, NamedTuple, IO, Pattern, Match, Text,
@@ -297,14 +305,14 @@ class FluentDataloader():
         self.dataloader = dataloader
         self.dataloader2 = dataloader2
         self.keys = keys
-        self.data_q = Queue(maxsize=10)
-        self.data_q2 = Queue(maxsize=10)
+        self.data_q = Queue(maxsize=5)
+        self.data_q2 = Queue(maxsize=5)
 
 
     def start_dataloader(self, dl, q):
         # dl = iter(dl)
         while True:
-            print("start true")
+            # print("start true")
             # # for data in dl:
             # try:
             #     data = next(dl)
@@ -315,18 +323,18 @@ class FluentDataloader():
                 x_pps = data[self.keys[0]]
                 y_pps = data[self.keys[1]]
                 for x, y in zip(x_pps, y_pps):
-                    print("start put")
+                    # print("start put")
                     x = x[None, ...]
                     y = y[None, ...]
                     data_single = (x, y)
                     if q == 1:
                         self.data_q.put(data_single)
-                        print(f"data_q's valuable data: {self.data_q.qsize()}")
+                        # print(f"data_q's valuable data: {self.data_q.qsize()}")
                     else:
                         self.data_q2.put(data_single)
-                        print(f"data_q2's valuable data: {self.data_q2.qsize()}")
-                    print("self.data_q in subprocess", self.data_q)
-                    print("self.data_q2 in subprocess", self.data_q2)
+                        # print(f"data_q2's valuable data: {self.data_q2.qsize()}")
+                    # print("self.data_q in subprocess", self.data_q)
+                    # print("self.data_q2 in subprocess", self.data_q2)
                     # time.sleep(60)
 
     def run(self):
@@ -351,7 +359,7 @@ class FluentDataloader():
                 #     print(f"data_q2.size: {self.data_q2.qsize()}")
                 #     count+=1
                 if self.data_q.qsize() > 0 or self.data_q2.qsize() > 0:
-                    print('self.data_q.size', self.data_q.qsize())
+                    # print('self.data_q.size', self.data_q.qsize())
                     if self.data_q.empty() or use_q2:
                         q = self.data_q2
                         use_q2 = True
@@ -366,7 +374,7 @@ class FluentDataloader():
                 # else:
 
                 data = q.get(timeout=100)
-                print('get data successfully')
+                # print('get data successfully')
                 yield data
 
 
@@ -377,84 +385,18 @@ def singlethread_ds(dl):
             x_pps = data[keys[0]]
             y_pps = data[keys[1]]
             for x, y in zip(x_pps, y_pps):
-                print("start put by single thread, not fluent thread")
+                # print("start put by single thread, not fluent thread")
                 x = x[None, ...]
                 y = y[None, ...]
                 data_single = (x, y)
                 yield data_single
 
 def inifite_generator(dataloader, dataloader2=None, keys = ("image", "label")):
-    if args.fluent_ds:
+    if dataloader2 != None:
         fluent_dl = FluentDataloader(dataloader, dataloader2, keys)
         return fluent_dl.run()
     else:
         return singlethread_ds(dataloader)
-
-    # # dataloader2 = copy.deepcopy(dataloader)
-    # dataloader = iter(dataloader)
-    # dataloader2 = iter(dataloader2)
-    # d = next(dataloader)
-    # data_queue = []
-    #
-    #
-    # data_q = Queue(maxsize=10)
-    # data_q2 = Queue(maxsize=10)
-    #
-    # def start_dataloader(dl, q):
-    #     while True:
-    #         print("start true")
-    #         # for data in dl:
-    #         try:
-    #             data = next(dl)
-    #         except StopIteration:
-    #             data = next(dl)
-    #         x_pps = data[keys[0]]
-    #         y_pps = data[keys[1]]
-    #         for x, y in zip(x_pps, y_pps):
-    #             print("start put")
-    #             x = x[None, ...]
-    #             y = y[None, ...]
-    #             data = (x, y)
-    #             if q==1:
-    #                 data_q.put(data)
-    #                 print(f"data_q's valuable data: {data_q.qsize()}")
-    #             else:
-    #                 data_q2.put(data)
-    #                 print(f"data_q2's valuable data: {data_q2.qsize()}")
-    #
-    # p1 = multiprocessing.Process(target=start_dataloader, args=(dataloader, 1, ))
-    # p2 = multiprocessing.Process(target=start_dataloader, args=(dataloader2, 2, ))
-    # p1.start()
-    # p2.start()
-    #
-    # use_q2 = False
-    # while True:
-    #     if len(keys)==2:
-    #         print(f"data_q.size: {data_q.qsize()}")
-    #         print(f"data_q2.size: {data_q2.qsize()}")
-    #         if data_q.qsize()>0 or data_q2.qsize()>0:
-    #             if data_q.empty() or use_q2:
-    #                 q = data_q2
-    #                 use_q2 = True
-    #             else:
-    #                 q = data_q
-    #                 use_q2 = False
-    #         else:
-    #             continue
-    #         # if data_q.empty() and data_q2.empty():
-    #         #     # print('empty')
-    #         #     continue
-    #         # else:
-    #
-    #         data = q.get(timeout=100)
-    #         yield data
-    #     else:
-    #         for data in dataloader:
-    #             x_pps = data[keys[0]]
-    #             for x in x_pps:
-    #                 x = x[None, ...]
-    #                 yield x
-
 
 
 def get_loss_of_multi_output(x, y, net, criteria, amp=True):
@@ -510,6 +452,23 @@ def get_loss_of_seg_rec(x, y, net, criteria, amp=True):
     return loss
 
 
+def listdirs(path):
+    return [d for d in os.listdir(path) if os.path.isdir(os.path.join(path, d))]
+
+
+def if_seperate_data_from_gdth(path):
+    current_sub_dirs = listdirs(path)
+
+    if (len(ct_names) != 0) and ("ori_ct" not in current_sub_dirs and "gdth" not in current_sub_dirs):
+        # all ct and gdth are placed in one directory
+        return False
+    elif (len(ct_names) == 0) and ("ori_ct" in current_sub_dirs and "gdth" in current_sub_dirs):
+        # ct and gdth are placed in 2 seperate directories
+        return True
+    else:
+        raise Exception("dataset architecture is not clear")
+
+
 class TaskArgs(CommonTask):
     def __init__(self,
                  task: str,
@@ -533,12 +492,14 @@ class TaskArgs(CommonTask):
         self.net.to(self.device)
         self.ld_name: str = ld_name
         self.tr_nb: Union[int] = tr_nb
-        self.tr_nb_cache: int = 20
+        self.tr_nb_cache: int = 200
+        self.current_step = 0
+
         self.ds: int = ds
         self.tsp_xy = float(tsp.split("_")[0])
         self.tsp_z = float(tsp.split("_")[1])
         self.sub_dir = sub_dir
-        self.load_workers = 6
+        self.load_workers = 3
         self.scaler = torch.cuda.amp.GradScaler()
 
         self.lr: float = lr
@@ -546,7 +507,7 @@ class TaskArgs(CommonTask):
         self.main_net = all_nets[self.main_net_name]
         self.keys: Tuple[str, str] = ("pred", "label")
 
-        self.mypath = Mypath(task)
+        self.mypath = Mypath(task, data_path=args.data_path)
         self.ld_name = ld_name  # for fine-tuning and inference
 
         if ld_name:  # fine-tuning
@@ -595,8 +556,11 @@ class TaskArgs(CommonTask):
 
     def get_xforms(self, mode: str = "train", keys=("image", "label")):
         """returns a composed transform for train/val/infer."""
+        nibabel_reader = NibabelReader()
+        itk_reader = ITKReader()
         xforms = [
-            LoadNiftid(keys),  # .nii, .nii.gz [.mhd, .mha LoadImage]
+            LoadImaged(keys),  # .nii, .nii.gz [.mhd, .mha LoadImage]
+            # LoadNiftid(keys),
             AddChanneld(keys),
             Orientationd(keys, axcodes="LPS"),
             Spacingd(keys, pixdim=(self.tsp_xy, self.tsp_xy, self.tsp_z), mode=("bilinear", "nearest")[: len(keys)]),
@@ -610,8 +574,8 @@ class TaskArgs(CommonTask):
                     RandAffined(
                         keys,
                         prob=0.3,
-                        rotate_range=(-0.05, 0.05),
-                        scale_range=(-0.1, 0.1),
+                        rotate_range=(0.05, 0.05),
+                        scale_range=(0.1, 0.1, 0.1),
                         mode=("bilinear", "nearest"),
                         as_tensor_output=False,
                     ),
@@ -686,7 +650,8 @@ class TaskArgs(CommonTask):
             self.scaler.scale(loss).backward()
         else:
             loss.backward()
-        t = time.time()
+
+        # t = time.time()
         self.enc_parameters, self.enc_gradients = self.get_enc_parameters()
         self.enc_grad_norm = {name: torch.norm(gradient) for name, gradient in self.enc_gradients.items()}
         if args.ratio_norm_gradients and self.net_name != self.main_net_name:
@@ -704,7 +669,9 @@ class TaskArgs(CommonTask):
         data_dir = self.mypath.data_dir()
         # data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
         print(data_dir)
+
         ct_names: List[str] = cu.get_all_ct_names(data_dir, name_suffix="_ct")
+
         if self.task != "recon":
             gdth_names: List[str] = cu.get_all_ct_names(data_dir, name_suffix="_seg")
         else:
@@ -716,7 +683,7 @@ class TaskArgs(CommonTask):
             total_nb = len(ct_names)
         self.n_train: int = int(train_frac * total_nb) + 1  # avoid empty train data
         if self.net_name != self.main_net_name:
-            self.n_val: int = 2
+            self.n_val: int = 5
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             # self.n_val: int = 5
@@ -734,34 +701,37 @@ class TaskArgs(CommonTask):
         train_files, val_files = self.get_file_names()
 
         train_transforms = self.get_xforms("train")
-        if args.smartcache or self.n_train > self.tr_nb_cache:
-            # if args.smartcache:
-            self.cache_num = min(self.tr_nb_cache, self.n_train - 1)
-            # else:
-            #     self.cache_num = self.tr_nb_cache
-            # cache_num must be smaller than dataset length to support replacement.
-            self.train_ds = monai.data.SmartCacheDataset(data=train_files,
-                                                         transform=train_transforms,
-                                                         replace_rate=1,
-                                                         cache_num=self.cache_num,
-                                                         num_init_workers=5,
-                                                         num_replace_workers=self.load_workers,
-                                                         )
+        if args.cache:
+            if args.smartcache :
+                # if args.smartcache:
+                self.cache_num = min(self.tr_nb_cache, self.n_train - 1)
+                # else:
+                #     self.cache_num = self.tr_nb_cache
+                # cache_num must be smaller than dataset length to support replacement.
+                self.train_ds = monai.data.SmartCacheDataset(data=train_files,
+                                                             transform=train_transforms,
+                                                             replace_rate=1,
+                                                             cache_num=self.cache_num,
+                                                             num_init_workers=5,
+                                                             num_replace_workers=self.load_workers,
+                                                             ) #or self.n_train > self.tr_nb_cache
+            else:
+                self.train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms,
+                                                        num_workers=self.load_workers, cache_rate=1)
         else:
-            self.train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms,
-                                                    num_workers=self.load_workers, cache_rate=1)
+            self.train_ds = Dataset(data=train_files, transform=train_transforms,)
 
         train_loader = monai.data.DataLoader(
             self.train_ds,
             batch_size=args.batch_size,
-            shuffle=True,
+            shuffle=False,
             num_workers=self.load_workers,
             # pin_memory=torch.cuda.is_available(),
             pin_memory=False,
             persistent_workers=True,
 
         )
-        if args.smartcache or self.n_train > self.tr_nb_cache:
+        if args.smartcache : #or self.n_train > self.tr_nb_cache
             self.train_ds.start()  # need it if SmartCacheDataset
 
         if not require_val:
@@ -803,16 +773,30 @@ class TaskArgs(CommonTask):
             inferer=get_inferer(),
             post_transform=val_post_transform,
             key_val_metric={
-                "val_mean_dice": MeanDice(include_background=False,
+                "val_mean_dice": MeanDice(include_background=True,
                                           output_transform=lambda x: (x[keys[0]], x[keys[1]]))
             },
             val_handlers=val_handlers,
             amp=self.amp,
         )
 
+        def record_val_metrics(engine):
+            engine.state.epoch = int(self.current_step / (self.steps_per_epoch + 0.1))
+            val_log_dir = self.mypath.task_model_dir() + '/' + self.mypath.str_name + 'val_log.csv'
+            if os.path.exists(val_log_dir):
+                val_log = np.genfromtxt(val_log_dir, dtype='str', delimiter=',')
+            else:
+                val_log = ['epoch', 'val_dice']
+            val_log = np.vstack([val_log, [engine.state.epoch, round(engine.state.metrics["val_mean_dice"], 4)]])
+            np.savetxt(val_log_dir, val_log, fmt='%s', delimiter=',')
+
+        from ignite.engine import Events
+        evaluator.add_event_handler(Events.COMPLETED, record_val_metrics)
+
         return evaluator
 
     def run_one_step(self, net_ta_dict, idx: int):
+        self.current_step = idx
         self.net.train()
         t1 = time.time()
         if "yichao" in self.net_name:
@@ -825,7 +809,7 @@ class TaskArgs(CommonTask):
             y = self.net(x)  # now we have x and its gdth: y
 
             t4 = time.time()
-            print(f"forward data cost time: {t4 - t3}")
+            print(f"forward data cost time: {int(t4 - t3)}")
             x = x.to("cpu")
             if len(y) > 1:
                 y = y[0]
@@ -851,7 +835,7 @@ class TaskArgs(CommonTask):
             y_Affined = y_Affined.float()
 
             t5 = time.time()
-            print(f"transform data cost time: {t5 - t4}")
+            print(f"transform data cost time: {int(t5 - t4)}")
 
             pred = self.net(x_Affined)
             if len(pred) > 1:
@@ -869,7 +853,7 @@ class TaskArgs(CommonTask):
             y = y.to(self.device)
 
             if "itgt" in self.net_name:
-                print("self.netname", self.net_name)
+                # print("self.netname", self.net_name)
                 if "vae" in self.net_name or "VAE" in self.net_name:
                     pred, rec_loss = self.net(x)
                     loss = self.criteria(pred, y) + rec_loss
@@ -887,16 +871,17 @@ class TaskArgs(CommonTask):
         
         # for
         t2 = time.time()
-        print(f"load data cost time {t3 - t1}, one step backward training cost time: {t2 - t8}")
+        print(f"load data cost time {int(t3 - t1)}, one step backward training cost time: {t2 - t8}")
         if args.ad_lr and self.main_net_name != self.net_name:  # reset lr for aux nets
             lr = net_ta_dict[self.main_net_name].current_loss / self.current_loss * self.lr
             self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
             print(f"task: {self.task}, lr: {lr}")
         print(f"task: {self.task}, loss: {loss.item()}")
-        if (args.smartcache or self.n_train > self.tr_nb_cache) and (idx % (self.cache_num * args.pps)) == 0:
+
+        if (args.smartcache ) and (idx % (self.cache_num * args.pps)) == 0: #or self.n_train > self.tr_nb_cache
             print(f"start update cache for task {self.task}")
             self.train_ds.update_cache()
-        if (args.smartcache or self.n_train > self.tr_nb_cache) and idx == args.step_nb - 1:
+        if (args.smartcache ) and idx == args.step_nb - 1: #or self.n_train > self.tr_nb_cache
             train_ds.shutdown()
 
         # print statistics
@@ -918,7 +903,7 @@ class TaskArgs(CommonTask):
         # epochs = [int(args.epochs * 0.8), int(args.epochs * 0.2)]
         epochs = [200, 100]
         intervals = [1, 1]
-        lrs = [1e-3, 1e-4]
+        lrs = [1e-4, 1e-4]
         momentum = 0.95
         for epoch, interval, lr in zip(epochs, intervals, lrs):  # big interval to save time, then small interval refine
             logging.info(f"epochs {epoch}, lr {lr}, momentum {momentum}, interval {interval}")
@@ -944,20 +929,20 @@ class TaskArgs(CommonTask):
 
             trainer.run()
 
-    def do_vilidation_if_need(self, net_ta_dict, idx_: int):
+    def do_validation_if_need(self, net_ta_dict, idx_: int):
         if idx_ < int(args.step_nb * 0.8):
             valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
 
-        if idx_ % valid_period == 0:
+        if idx_ % valid_period == (valid_period-1):
             print("start do validation")
             if "net_recon" not in self.net_name:
                 self.evaluator.run()
 
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
-        images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
+        images = sorted(glob.glob(os.path.join(data_folder, "*_ct*")))
         logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
         infer_files = [{"image": img} for img in images]
 
@@ -984,60 +969,69 @@ class TaskArgs(CommonTask):
         self.net.eval()
         prediction_folder = self.mypath.infer_pred_dir(self.ld_name) + "/" + args.infer_data_dir.split("/")[-1]
         print(prediction_folder)
-        # saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
-        # with torch.no_grad():
-        #     for infer_data in self.infer_loader:
-        #         logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
-        #         print(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
-        #         preds = inferer(infer_data[keys[0]].to(self.device), self.net)
-        #         n = 1.0
-        #         for _ in range(4):
-        #             # test time augmentations
-        #             _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
-        #             pred = inferer(_img.to(self.device), self.net)
-        #             preds = preds + pred
-        #             n = n + 1.0
-        #             for dims in [[2], [3]]:
-        #                 flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
-        #                 pred = torch.flip(flip_pred, dims=dims)
-        #                 preds = preds + pred
-        #                 n = n + 1.0
-        #         preds = preds / n
-        #         if write_pbb_maps:
-        #             # pass
-        #             filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
-        #             pbb_folder = prediction_folder + "/pbb_maps/"
-        #             npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
-        #             if not os.path.isdir(pbb_folder):
-        #                 os.makedirs(pbb_folder)
-        #             np.save(npy_name, preds.cpu())
-        #         preds = (preds.argmax(dim=1, keepdims=True)).float()
-        #         saver.save_batch(preds, infer_data["image_meta_dict"])
+        inferer = get_inferer()
+        saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
+        with torch.no_grad():
+            for infer_data in self.infer_loader:
+                logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
+                print(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
+                preds = inferer(infer_data[keys[0]].to(self.device), self.net)
+                n = 1.0
+                for _ in range(4):
+                    # test time augmentations
+                    _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
+                    pred = inferer(_img.to(self.device), self.net)
+                    preds = preds + pred
+                    n = n + 1.0
+                    if 'lesion' in self.task:
+                        for dims in [[2], [3]]:
+                            flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
+                            pred = torch.flip(flip_pred, dims=dims)
+                            preds = preds + pred
+                            n = n + 1.0
+                preds = preds / n
+                if write_pbb_maps:
+                    # pass
+                    filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
+                    pbb_folder = prediction_folder + "/pbb_maps/"
+                    npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
+                    if not os.path.isdir(pbb_folder):
+                        os.makedirs(pbb_folder)
+                    np.save(npy_name, preds.cpu())
+                preds = (preds.argmax(dim=1, keepdims=True)).float()
+                saver.save_batch(preds, infer_data["image_meta_dict"])
 
         # copy the saved segmentations into the required folder structure for submission
         submission_dir = os.path.join(prediction_folder, "to_submit")
         if not os.path.exists(submission_dir):
             os.makedirs(submission_dir)
-        files = glob.glob(os.path.join(prediction_folder, "volume*", "*.nii.gz"))
-        for f in files:
-            new_name = os.path.basename(f)
-            new_name = new_name[len("volume-covid19-A-0"):]
-            new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
-            to_name = os.path.join(submission_dir, new_name)
-            shutil.copy(f, to_name)
+        # files = glob.glob(os.path.join(prediction_folder,"*", "*.nii.gz"))
+        files = cu.get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct")
 
-        files = glob.glob(os.path.join(prediction_folder, "COVID-19-AR-*", "*.nii.gz"))
         for f in files:
             new_name = os.path.basename(f)
-            new_name = new_name[len("COVID-19-AR-"):]
-            new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
-            to_name = os.path.join(submission_dir, new_name)
+            new_name = new_name.split("_ct")[0] + new_name.split("_ct")[1]
+            # new_name = new_name[len("volume-covid19-A-0"):]
+            # new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
+            to_name = os.path.join(submission_dir, new_name )
             shutil.copy(f, to_name)
 
         logging.info(f"predictions copied to {submission_dir}.")
-        if "lung" in self.net_name:
-            import find_connect_parts as ff
-            ff.write_connected_lobes(preds_dir, workers=5, target_dir=preds_dir + "/biggest_parts")
+
+
+        # if "lobe" in self.net_name:  # other tasks do not have lobe ground truth
+        #     gdth_file = self.mypath.data_dir() + '/valid'
+        #     pred_file = self.mypath.task_model_dir(self.ld_name) + '/infer_pred/valid/to_submit'
+        #     csv_file = self.mypath.task_model_dir(self.ld_name) + '/' + self.ld_name + '_metrics' + '.csv'
+        # 
+        #     metrics = sg.write_metrics(labels=self.labels[1:],  # exclude background
+        #                                gdth_path=gdth_file,
+        #                                pred_path=pred_file,
+        #                                csv_file=csv_file)
+
+        # if "lung" in self.net_name:
+        #
+        #     write_connected_lobes(preds_dir, workers=5, target_dir=preds_dir + "/biggest_parts")
 
 
 def get_netname_ta_dict(netname_label_dict: Dict[str, List],
@@ -1200,16 +1194,12 @@ def train_mtnet():
                 tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, idx_)
                 for ta in tr_tas:
                     ta.run_one_step(net_ta_dict, idx_)
-                    ta.do_vilidation_if_need(net_ta_dict, idx_)
+                    ta.do_validation_if_need(net_ta_dict, idx_)
 
-
-
-                    task = net_ta_dict["net_lesion"]
-                    net_w = task.net.enc.down_3.convs.conv_1.conv.weight
+                    net_w = ta.main_task.net.enc.down_3.convs.conv_1.conv.weight
                     net_grad = net_w.grad
                     try:
-                        # print(f"net_w: {net_w[0][0][0][0]}; net_grad: {net_grad[0][0][0][0]}")
-                        norm_grad_csv = ta.mypath.task_log_dir + "/" + ta.mypath.str_name + "grad.csv"
+                        norm_grad_csv = ta.mypath.task_model_dir() + '/' + ta.mypath.str_name + "grad.csv"
                         if not os.path.isfile(norm_grad_csv):
                             with open(norm_grad_csv, "a") as f:
                                 writer = csv.writer(f, delimiter=',')
@@ -1221,9 +1211,6 @@ def train_mtnet():
                             writer.writerow(l)
                     except:
                         pass
-                        # print(f"net_w.shape: {net_w.shape}; net_grad.shape: {net_grad.shape}")
-
-                    # print(f"net_w_norm: {torch.norm(net_w).item()}; net_grad_norm: {torch.norm(net_grad).item()}")
 
 
         else:
