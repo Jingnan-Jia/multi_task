@@ -2,60 +2,42 @@
 # @Time    : 11/15/20 7:50 PM
 # @Author  : Jingnan
 # @Email   : jiajingnan2222@gmail.com
-import numpy as np
-import monai
-import os
-import glob
 
 import glob
 import logging
 import os
 import shutil
-import sys
-from shutil import copy2
-from typing import Type
-from shutil import copy2
-import time
-
-import numpy as np
-import torch
-import torch.nn as nn
-from ignite.contrib.handlers import ProgressBar
-from torch.autograd import Variable
-import torch.nn.functional as F
-from ignite.engine import Events
-# from torch.utils.tensorboard import SummaryWriter
-from set_args import args
-from monai.data.utils import create_file_basename
-# from get_unetpp import get_unetpp
 
 import monai
+import numpy as np
+import torch
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-from monai.handlers import StatsHandler, MeanDice, ValidationHandler
-from CheckpointSaver import CheckpointSaver
 from monai.transforms import (
     AddChanneld,
-    AsDiscreted,
     CastToTyped,
-    LoadNiftid,
+    LoadImaged,
     Orientationd,
     RandAffined,
     RandCropByPosNegLabeld,
-    RandFlipd,
     RandGaussianNoised,
     ScaleIntensityRanged,
     Spacingd,
     SpatialPadd,
     ToTensord,
 )
-from typing import Dict
+
+# from torch.utils.tensorboard import SummaryWriter
+from set_args import args
+
+
+# from get_unetpp import get_unetpp
 
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
 
     xforms = [
-        LoadNiftid(keys),
+        LoadImaged(keys),
         AddChanneld(keys),
         Orientationd(keys, axcodes="LPS"),
         Spacingd(keys, pixdim=(args.space_xy, args.space_xy, args.space_z), mode=("bilinear", "nearest")[: len(keys)]),

@@ -2,7 +2,7 @@
 # @Time    : 11/21/20 12:10 AM
 # @Author  : Jingnan
 # @Email   : jiajingnan2222@gmail.com
-from set_args_mtnet import args
+from mt.mymodules.set_args_mtnet import args
 
 import os
 import time
@@ -52,18 +52,18 @@ class Mypath(object):
         """
 
         self.task = task
-        self.dir_path = os.path.dirname(os.path.realpath(__file__))  # abosolute path of the current .py file
-        self.model_path = os.path.join(self.dir_path, 'models')
-        self.log_path = os.path.join(self.dir_path, 'logs')
-        self.data_path = os.path.join(self.dir_path, data_path)  # data_xy77_z5 or data_ori_space
-        self.results_path = os.path.join(self.dir_path, 'results')
+        self.data_path = data_path  # data_xy77_z5 or data_ori_space
+
+        self.results_path = 'results'
+        self.model_path = os.path.join(self.results_path, 'models')
+        self.log_path = os.path.join(self.results_path, 'slurmlogs')
 
         if current_time:
             self.str_name = current_time
         else:
             self.str_name = str(int(time.time())) + '_' + str(np.random.randint(1000))
 
-    def sub_dir(self):
+    def data_sub_dir(self):
         """
         Sub directory of tasks. It is used to choose different datasets (like 'GLUCOLD', 'SSc').
 
@@ -88,52 +88,40 @@ class Mypath(object):
 
     @mkdir_dcrt
     def data_dir(self):
+        """data directory.
+
+        Returns: dataset directory for a specific task
+
         """
-        data directory.
-        :return: data dataset directory for a specific task
-        """
-        data_dir = self.data_path + '/' + self.task
+
+        data_dir = os.path.join(self.data_path, self.task)
         return data_dir
 
     @mkdir_dcrt
     def task_log_dir(self):
-        """
-        log directory.
-        :return: directory to save logs
-        """
+        """log directory for the specific task."""
         task_log_dir = self.log_path + '/' + self.task
         return task_log_dir
 
-
-    @mkdir_dcrt
-    def train_log_fpath(self):
-        """
-        log full path to save training  measuremets during training.
-
-        :return: log full path with suffix .csv
-        """
-        task_log_dir = self.task_model_dir()
-        return task_log_dir + '/' + self.str_name + 'train.csv'
-    
-    
     @mkdir_dcrt
     def task_model_dir(self, current_time=None):
-        """
-        model directory.
-        :return: directory to save models
-        """
+        """Model directory for the specific task"""
         if current_time:
             task_model_dir = self.model_path + '/' + self.task + "/" + current_time
         else:
             task_model_dir = self.model_path + '/' + self.task + "/" + self.str_name
         return task_model_dir
 
+    @mkdir_dcrt
+    def train_log_fpath(self):
+        """log full path to save training measurements during training."""
+        task_log_dir = self.task_model_dir()
+        return task_log_dir + '/' + self.str_name + 'train.csv'
+
     def infer_pred_dir(self, current_time=None):
         task_model_dir = self.task_model_dir(current_time)
-        print(f"infer results are saved at {task_model_dir+'/infer_pred'}")
-        return task_model_dir+"/infer_pred"
-        
-
+        print(f"infer results are saved at {task_model_dir + '/infer_pred'}")
+        return task_model_dir + "/infer_pred"
 
     @mkdir_dcrt
     def model_figure_path(self):
@@ -142,9 +130,8 @@ class Mypath(object):
 
         :return: model figure directory
         """
-        model_figure_path = self.dir_path + '/figures'
+        model_figure_path = self.results_path + '/figures'
         return model_figure_path
-
 
     @mkdir_dcrt
     def args_fpath(self):
@@ -155,7 +142,6 @@ class Mypath(object):
                 """
         task_model_path = self.task_model_dir()
         return task_model_path + '/' + self.str_name + '_args.py'
-
 
     @mkdir_dcrt
     def model_fpath_best_patch(self, phase, str_name=None):
@@ -188,7 +174,6 @@ class Mypath(object):
             else:
                 return task_model_path + '/' + str_name + '_' + phase + '.pt'
 
-
     @mkdir_dcrt
     def ori_ct_path(self, phase, sub_dir=None):
         """
@@ -198,7 +183,7 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            data_path = self.data_path + '/' + self.task + '/' + phase + '/ori_ct/' + self.sub_dir()
+            data_path = self.data_path + '/' + self.task + '/' + phase + '/ori_ct/' + self.data_sub_dir()
         else:
             data_path = self.data_path + '/' + self.task + '/' + phase + '/ori_ct/' + sub_dir
         return data_path
@@ -212,7 +197,7 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            gdth_path = self.data_path + '/' + self.task + '/' + phase + '/gdth_ct/' + self.sub_dir()
+            gdth_path = self.data_path + '/' + self.task + '/' + phase + '/gdth_ct/' + self.data_sub_dir()
         else:
             gdth_path = self.data_path + '/' + self.task + '/' + phase + '/gdth_ct/' + sub_dir
         return gdth_path
@@ -227,7 +212,7 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            pred_path = self.results_path + '/' + self.task + '/' + phase + '/pred/' + self.sub_dir() + '/' + self.str_name
+            pred_path = self.results_path + '/' + self.task + '/' + phase + '/pred/' + self.data_sub_dir() + '/' + self.str_name
         else:
             pred_path = self.results_path + '/' + self.task + '/' + phase + '/pred/' + sub_dir + '/' + self.str_name
         if cntd_pts:
@@ -246,7 +231,7 @@ class Mypath(object):
         return pred_path + '/dices.csv'
 
     @mkdir_dcrt
-    def all_metrics_fpath(self, phase, fissure=False, sub_dir=sub_dir):
+    def all_metrics_fpath(self, phase, fissure=False, sub_dir=data_sub_dir):
         """
         full path of the saved dice
         :param sub_dir:

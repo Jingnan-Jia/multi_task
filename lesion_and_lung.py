@@ -4,69 +4,15 @@
 # @Email   : jiajingnan2222@gmail.com
 import jjnutils.util as cu
 
-
-import glob
-import logging
-import os
-import shutil
-import sys
-from shutil import copy2
-from typing import Type
-from shutil import copy2
-import time
-import random
-
-import numpy as np
-import torch
-import torch.nn as nn
-from ignite.contrib.handlers import ProgressBar
-from torch.autograd import Variable
-import torch.nn.functional as F
-from ignite.engine import Events
 # from torch.utils.tensorboard import SummaryWriter
-from monai.data.utils import create_file_basename
-from statistics import mean
 
-import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-from monai.handlers import StatsHandler, MeanDice, ValidationHandler
-from CheckpointSaver import CheckpointSaver
-from monai.transforms import (
-    AddChanneld,
-    AsDiscreted,
-    CastToTyped,
-    LoadNiftid,
-    Orientationd,
-    RandAffined,
-    RandCropByPosNegLabeld,
-    RandSpatialCropd,
-    RandFlipd,
-    RandGaussianNoised,
-    ScaleIntensityRanged,
-    Spacingd,
-    SpatialPadd,
-    ToTensord,
-)
-from typing import Dict
 
 if __name__ == '__main__':
-    from mypath import Mypath
-    from custom_net import Encoder, DecoderRec, DecoderSeg, EnsembleEncRec, EnsembleEncSeg, DecoderSegRec
-    from taskargs import CommonTask
-    from set_args_mtnet import args
-    from unet_att_dsv import unet_CT_single_att_dsv_3D
-    from saharnet import Saharnet_decoder, Saharnet_encoder
-    from Generic_UNetPlusPlus import Generic_UNetPlusPlus
+    pass
 
 else:
-    from .mypath import Mypath
-    from .custom_net import Encoder, DecoderRec, DecoderSeg, EnsembleEncRec, EnsembleEncSeg, DecoderSegRec
-    from .taskargs import CommonTask
-    from .set_args_mtnet import args
-    from .unet_att_dsv import unet_CT_single_att_dsv_3D
-    from .saharnet import Saharnet_decoder, Saharnet_encoder
-    from .Generic_UNetPlusPlus import Generic_UNetPlusPlus
-
+    pass
 
 lesion_dir = "/data/jjia/monai/models/lesion/1606762984_399/infer_pred/COVID-19-20_TestSet/to_submit_multitask_deepsupervision"
 lesion_names = cu.get_all_ct_names(lesion_dir)
