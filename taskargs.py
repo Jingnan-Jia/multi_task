@@ -21,5 +21,5 @@ class CommonTask(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def do_vilidation_if_need(self):
+    def do_validation_if_need(self):
         raise NotImplementedError

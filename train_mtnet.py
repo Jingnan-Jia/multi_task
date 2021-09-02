@@ -1006,7 +1006,7 @@ class TaskArgs(CommonTask):
         if not os.path.exists(submission_dir):
             os.makedirs(submission_dir)
         # files = glob.glob(os.path.join(prediction_folder,"*", "*.nii.gz"))
-        files = cu.get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct")
+        files = cu.get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct_seg")
 
         for f in files:
             new_name = os.path.basename(f)

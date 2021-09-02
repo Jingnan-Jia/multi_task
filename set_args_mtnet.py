@@ -17,7 +17,7 @@ parser.add_argument('--net_names', help='model names', type=str, default='net_lo
 parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lobe_itgt')
 parser.add_argument('--data_path', help='change main task will change it ', type=str, default='data_ori_space')
 
-parser.add_argument('--pps', help='patches_per_scan', type=int, default=100)
+parser.add_argument('--pps', help='patches_per_scan', type=int, default=10)
 parser.add_argument('--amp', help='amp', type=bool, default=True)
 parser.add_argument('--batch_size', help='batch_size', type=int, default=1)
 parser.add_argument('--base', help='base', type=int, default=1)
@@ -29,7 +29,7 @@ parser.add_argument('--fluent_ds', help='fluent_ds', type=int, default=1)
 
 
 parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=144001)
-parser.add_argument('--valid_period1', help='valid_period', type=int, default=1)
+parser.add_argument('--valid_period1', help='valid_period', type=int, default=10)
 parser.add_argument('--valid_period2', help='valid_period', type=int, default=1)
 parser.add_argument('--cache', help=' cache data or not', type=int, default=0)
 parser.add_argument('--smartcache', help='smart cache data', type=int, default=0)
@@ -56,12 +56,12 @@ parser.add_argument('--ds_lu', type=int, default=0)
 parser.add_argument('--ds_rc', type=int, default=0)
 
 # target spacing along (x, y) and z, format: m_n
-parser.add_argument('--tsp_ls', type=str, default='1.4_2.5')
-parser.add_argument('--tsp_lb', type=str, default='1.4_2.5')
-parser.add_argument('--tsp_vs', type=str, default='1.4_2.5')
-parser.add_argument('--tsp_aw', type=str, default='1.4_2.5')
-parser.add_argument('--tsp_lu', type=str, default='1.4_2.5')
-parser.add_argument('--tsp_rc', type=str, default='1.4_2.5')
+parser.add_argument('--tsp_ls', type=str, default='0.64_0.6')  # space along z of SSc is 0.3, of EXACT09 is 0.8
+parser.add_argument('--tsp_lb', type=str, default='0.64_0.6')
+parser.add_argument('--tsp_vs', type=str, default='0.64_0.6')
+parser.add_argument('--tsp_aw', type=str, default='0.64_0.6')
+parser.add_argument('--tsp_lu', type=str, default='0.64_0.6')
+parser.add_argument('--tsp_rc', type=str, default='0.64_0.6')
 
 # number of training images, 0 means "all"
 parser.add_argument('--tr_nb_ls', type=int, default=0)
@@ -81,14 +81,14 @@ parser.add_argument('--sub_dir_rc', type=str, default='LUNA16')  # or all_ct_les
 
 # name of loaded trained model for single-task net
 parser.add_argument('--ld_ls', type=str, default='')
-parser.add_argument('--ld_lb', type=str, default='1611152191_525')
+parser.add_argument('--ld_lb', type=str, default='')
 parser.add_argument('--ld_vs', type=str, default='')
 parser.add_argument('--ld_aw', type=str, default='')
 parser.add_argument('--ld_lu', type=str, default='')
 parser.add_argument('--ld_rc', type=str, default='')
 
 # name of loaded trained model for single-task net
-parser.add_argument('--infer_data_dir', type=str, default='/data/jjia/mt/data/lobe/valid/ori_ct/LOLA11')
+parser.add_argument('--infer_data_dir', type=str, default='/data/jjia/monai/data_ori_space/lola11')
 
 #/data/jjia/monai/data_xy77_z5/lesion
 #/data/jjia/monai/COVID-19-20_v2/Train
