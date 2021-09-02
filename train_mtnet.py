@@ -121,6 +121,17 @@ class DiceCELoss(nn.Module):
 
 def get_mtnet(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, int], base: int = 1) -> Dict[
     str, nn.Module]:
+    """Get multi-task net.
+
+    Args:
+        netname_label_dict: A dict with key of net name, value of label.
+        netname_ds_dict: A dict with key of net name, value of 'number of deep supervision'.
+        base:
+
+    Returns:
+        A dict with key of net name, value of network.
+
+    """
     nets = {}
     for net_name, label in netname_label_dict.items():
         if "saharnet" in net_name:
@@ -494,6 +505,9 @@ def if_seperate_data_from_gdth(path):
 
 
 class TaskArgs(CommonTask):
+    """A container. The network's necessary parameters, datasets, training steps are in this container.
+
+    """
     def __init__(self,
                  task: str,
                  labels: List[int],
@@ -1060,6 +1074,13 @@ class TaskArgs(CommonTask):
 
 def get_netname_ta_dict(netname_label_dict: Dict[str, List],
                         all_nets: Dict[str, nn.Module]) -> Dict[str, TaskArgs]:
+    """Return a dict with net name as keys and task as values.
+
+    Args:
+        netname_label_dict: a dict with net name as keys and net labels as values.
+        all_nets: a dict with net name as keys and nets as values.
+
+    """
     ta_dict: Dict[str, TaskArgs] = {}
     for net_name, label in netname_label_dict.items():
         if "net_lesion" in net_name:
@@ -1157,15 +1178,11 @@ def get_netname_ta_dict(netname_label_dict: Dict[str, List],
 
 
 def get_net_ta_dict(net_names: List[str], args: argparse.Namespace) -> Dict[str, TaskArgs]:
-    """Get task dict.
-
-
+    """Return a dick with keys of net names, values of tasks.
 
     Args:
-        net_names:
-        args:
-
-    Returns:
+        net_names: A list of net names.
+        args: arguments
 
     """
     netname_label_dict: Dict[str, List] = get_netname_label_dict(net_names)
@@ -1201,6 +1218,15 @@ def get_fat_ta_list(net_ta_dict: Dict, main_name, idx_):
 
 
 def get_tr_ta_list(net_ta_dict, idx_):
+    """Return training task list for this training step.
+
+    Args:
+        net_ta_dict: A dick including net name and its corresponding task
+        idx_: index of training step
+
+    Returns:
+
+    """
     if args.fat:
         tr_ta_list: List[TaskArgs] = get_fat_ta_list(net_ta_dict, args.main_net_name, idx_)
     else:
@@ -1231,21 +1257,22 @@ def train_mtnet():
                     ta.run_one_step(net_ta_dict, idx_)
                     ta.do_validation_if_need(net_ta_dict, idx_)
 
-                    net_w = ta.main_task.net.enc.down_3.convs.conv_1.conv.weight
-                    net_grad = net_w.grad
-                    try:
-                        norm_grad_csv = ta.mypath.task_model_dir() + '/' + ta.mypath.str_name + "grad.csv"
-                        if not os.path.isfile(norm_grad_csv):
+                    if args.save_w
+                        net_w = ta.main_task.net.enc.down_3.convs.conv_1.conv.weight
+                        net_grad = net_w.grad
+                        try:
+                            norm_grad_csv = ta.mypath.task_model_dir() + '/' + ta.mypath.str_name + "grad.csv"
+                            if not os.path.isfile(norm_grad_csv):
+                                with open(norm_grad_csv, "a") as f:
+                                    writer = csv.writer(f, delimiter=',')
+                                    l = ["net_name", "net_w", "net_grad", "net_w_norm", "net_grad_norm"]
+                                    writer.writerow(l)
                             with open(norm_grad_csv, "a") as f:
                                 writer = csv.writer(f, delimiter=',')
-                                l = ["net_name", "net_w", "net_grad", "net_w_norm", "net_grad_norm"]
+                                l = [ta.net_name, net_w[0][0][0][0], net_grad[0][0][0][0], torch.norm(net_w).item(), torch.norm(net_grad).item()]
                                 writer.writerow(l)
-                        with open(norm_grad_csv, "a") as f:
-                            writer = csv.writer(f, delimiter=',')
-                            l = [ta.net_name, net_w[0][0][0][0], net_grad[0][0][0][0], torch.norm(net_w).item(), torch.norm(net_grad).item()]
-                            writer.writerow(l)
-                    except:
-                        pass
+                        except:
+                            pass
 
         else:
             tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, 0)

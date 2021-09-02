@@ -26,6 +26,7 @@ parser.add_argument("--patch_z", type=int, default=96, help="patch size along z 
 parser.add_argument('--ad_lr', help='adaptive learning rate', type=int, default=0)
 parser.add_argument('--ratio_norm_gradients', help='ratio of norm of gradients to main net', type=float, default=0)
 parser.add_argument('--fluent_ds', help='fluent_ds', type=int, default=1)
+parser.add_argument('--save_w', help='save weights magnitude', type=int, default=0)
 
 
 parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=144001)
