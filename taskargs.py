@@ -13,13 +13,13 @@ class CommonTask(ABC):
         self.amp = True
         
     @abstractmethod
-    def run_one_step(self):
+    def run_one_step(self, *args, **kwargs):
         raise NotImplementedError
 
     @abstractmethod
-    def run_all_epochs(self):
+    def run_all_epochs(self, *args, **kwargs):
         raise NotImplementedError
 
     @abstractmethod
-    def do_validation_if_need(self):
+    def do_validation_if_need(self, *args, **kwargs):
         raise NotImplementedError

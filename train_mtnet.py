@@ -327,7 +327,7 @@ class FocalLoss(nn.Module):
             return F_loss
 
 
-def get_loss(task: str) -> Type[nn.Module]:
+def get_loss(task: str) -> nn.Module:
     loss_fun: Type[nn.Module]
     if task == "recon":
         loss_fun = nn.MSELoss()  # do not forget parenthesis
@@ -590,8 +590,6 @@ class TaskArgs(CommonTask):
                 enc_gradients[name] = param.grad
         return enc_parameters, enc_gradients
 
-
-
     def get_xforms(self, mode: str = "train", keys=("image", "label")):
         """returns a composed transform for train/val/infer."""
         nibabel_reader = NibabelReader()
@@ -789,8 +787,6 @@ class TaskArgs(CommonTask):
             )
             return train_loader, val_loader
 
-
-
     def get_evaluator(self):
         keys = ("pred", "label")
 
@@ -834,6 +830,18 @@ class TaskArgs(CommonTask):
         return evaluator
 
     def run_one_step(self, net_ta_dict, idx: int):
+        """Run one step.
+
+        Args:
+            net_ta_dict: a dick with net name as key, task as value.
+            idx: index of step
+
+        Q: why we need net_ta_dict?
+        A: Main task was not be instiated during the instiatation of other tasks.
+
+
+        """
+
         self.current_step = idx
         self.net.train()
         t1 = time.time()
@@ -1194,8 +1202,8 @@ def get_net_ta_dict(net_names: List[str], args: argparse.Namespace) -> Dict[str,
 
 
 def get_fat_ta_list(net_ta_dict: Dict, main_name, idx_):
-    """
-    for each epoch, only return [main_net, one_aux_net]
+    """return [main_net, one_aux_net] for each epoch.
+
     """
     net_names, ta_list = list(net_ta_dict.keys()), list(net_ta_dict.values())
     if len(net_names) == 1:  # only one net
@@ -1217,7 +1225,7 @@ def get_fat_ta_list(net_ta_dict: Dict, main_name, idx_):
         raise Exception("net names are empty")
 
 
-def get_tr_ta_list(net_ta_dict, idx_):
+def get_tr_ta_list(net_ta_dict, idx_, main_net_name, fat=1):
     """Return training task list for this training step.
 
     Args:
@@ -1227,8 +1235,8 @@ def get_tr_ta_list(net_ta_dict, idx_):
     Returns:
 
     """
-    if args.fat:
-        tr_ta_list: List[TaskArgs] = get_fat_ta_list(net_ta_dict, args.main_net_name, idx_)
+    if fat:  # focus-alternative-training
+        tr_ta_list: List[TaskArgs] = get_fat_ta_list(net_ta_dict, main_net_name, idx_)
     else:
         tr_ta_list: List[TaskArgs] = net_ta_dict
     return tr_ta_list
@@ -1249,15 +1257,15 @@ def train_mtnet():
     net_ta_dict: Dict[str, TaskArgs] = get_net_ta_dict(net_names, args)
 
     if args.mode == "train":
-        if args.train_mode == "stepbystep":
+        if args.train_mode == "stepbystep":  # alternative training
             for idx_ in range(args.step_nb):
                 print('step number: ', idx_)
-                tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, idx_)
+                tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, idx_, args.main_net_name, args.fat)
                 for ta in tr_tas:
                     ta.run_one_step(net_ta_dict, idx_)
                     ta.do_validation_if_need(net_ta_dict, idx_)
 
-                    if args.save_w
+                    if args.save_w:
                         net_w = ta.main_task.net.enc.down_3.convs.conv_1.conv.weight
                         net_grad = net_w.grad
                         try:
