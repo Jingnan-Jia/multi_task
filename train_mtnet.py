@@ -303,7 +303,7 @@ def get_netname_ds_dict(net_names: List[str]) -> Dict[str, int]:
 
 class FocalLoss(nn.Module):
     def __init__(self, alpha=0.25, gamma=2, logits=False, reduce=True):
-        super(FocalLoss, self).__init__()
+        super().__init__()
         self.alpha = alpha
         self.gamma = gamma
         self.logits = logits
@@ -328,7 +328,13 @@ class FocalLoss(nn.Module):
 
 
 def get_loss(task: str) -> nn.Module:
-    loss_fun: Type[nn.Module]
+    """Return loss function from its name.
+
+    Args:
+        task: task name
+
+    """
+    loss_fun: nn.Module
     if task == "recon":
         loss_fun = nn.MSELoss()  # do not forget parenthesis
     else:
