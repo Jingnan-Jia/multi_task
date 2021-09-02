@@ -30,7 +30,7 @@ from monai.data.utils import create_file_basename
 from statistics import mean
 import seg_metrics.seg_metrics as sg
 from myutil.myutil import get_all_ct_names
-
+import argparse
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
 from monai.handlers import CheckpointSaver, StatsHandler, MeanDice, ValidationHandler
@@ -206,9 +206,20 @@ def get_net():
     return net
 
 
-def get_net_names(myargs) -> List[str]:
-    # Define the Model, use dash to separate multi net names, do not use ',' to separate it,
-    #  because ',' can lead to unknown error during parse arguments
+def get_net_names(myargs: argparse.Namespace) -> List[str]:
+    """Get net names from arguments.
+
+    Define the Model, use dash to separate multi net names, do not use ',' to separate it, because ',' can lead to
+    unknown error during parse arguments
+
+    Args:
+        myargs:
+
+    Returns:
+        A list of net names
+
+    """
+    #
     net_names = myargs.net_names.split('-')
     net_names = [i.lstrip() for i in net_names]  # remove backspace before each net name
     print('net names: ', net_names)
@@ -231,7 +242,13 @@ def get_inferer():
     return inferer
 
 
-def get_netname_label_dict(net_names: List[str]) -> Dict[str, List]:
+def get_netname_label_dict(net_names: List[str]) -> Dict[str, List[int]]:
+    """Return a dict with net name as keys and net labels as values.
+
+    Args:
+        net_names: A list of net names
+
+    """
     netname_label_dict = {}
     for net_name in net_names:
         if "net_recon" in net_name:
@@ -245,6 +262,13 @@ def get_netname_label_dict(net_names: List[str]) -> Dict[str, List]:
 
 
 def get_netname_ds_dict(net_names: List[str]) -> Dict[str, int]:
+    """Return a dict with net name as keys and 'number of deep supervision path' as values.
+
+    Args:
+        net_names: A list of net names
+
+
+    """
     netname_ds_dict = {}
     for net_name in net_names:
         if net_name == "net_recon":
@@ -1132,7 +1156,18 @@ def get_netname_ta_dict(netname_label_dict: Dict[str, List],
     return ta_dict
 
 
-def get_net_ta_dict(net_names: List[str], args) -> Dict[str, TaskArgs]:
+def get_net_ta_dict(net_names: List[str], args: argparse.Namespace) -> Dict[str, TaskArgs]:
+    """Get task dict.
+
+
+
+    Args:
+        net_names:
+        args:
+
+    Returns:
+
+    """
     netname_label_dict: Dict[str, List] = get_netname_label_dict(net_names)
     netname_ds_dict: Dict[str, int] = get_netname_ds_dict(net_names)
     all_nets: Dict[str, nn.Module] = get_mtnet(netname_label_dict, netname_ds_dict, args.base)
@@ -1211,7 +1246,6 @@ def train_mtnet():
                             writer.writerow(l)
                     except:
                         pass
-
 
         else:
             tr_tas: List[TaskArgs] = get_tr_ta_list(net_ta_dict, 0)
