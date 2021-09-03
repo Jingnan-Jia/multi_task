@@ -40,6 +40,64 @@ class Mypath(object):
     """
     Here, I use 'fpath' to indicatate full file path and name, 'path' to respresent the directory,
     'file_name' to respresent the file name in the parent directory.
+
+    The old path structure looks like:
+
+    - data_ori_space                            -> data_path
+        - lobe                                  -> data_task_dir
+            - LOLA11                            -> data_task_sub_dir
+        - vessel
+
+    - results                                   -> results_path
+        - lobe
+            - 12345_234
+                - LOLA11
+                    - figures                   -> model_figure_path
+                    - infer_pred                -> infer_pred_dir
+                    - dices.csv                 -> dices_fpath
+                    - all_metrics.csv           -> all_metrics_fpath
+                    - train.pt                  -> model_fpath_best_patch
+                    - train_patch.pt            -> model_fpath_best_whole
+                    - set_args.py
+
+        - vessel
+
+        - slurmlogs                             -> log_path
+            - 12345_234
+    =====================================================================
+    Old path look like:
+
+        - data_ori_space                        -> data_path
+        - lobe                                  -> data_dir
+            - train
+                - ori_ct
+                    - LOLA11                    -> ori_ct_path
+                - gdth_ct
+                    - LOLA11                    -> gdth_path
+        - vessel
+
+    - results                                   -> results_path
+        - lobe
+            - train
+                - pred
+                    - LOLA11                    -> pred_path
+                        - dices.csv             -> dices_fpath
+                        - all_metrics.csv       -> all_metrics_fpath
+
+        - vessel
+        - figures                               -> model_figure_path
+        - models                                -> model_path
+            - lobe
+                - 12345_234                     -> task_model_dir
+                    - infer_pred                -> infer_pred_dir
+                    - 12345_234_args.py
+                    - 12345_234_patch_train.pt  -> model_fpath_best_patch
+                    - 12345_234_train.pt        -> model_fpath_best_whole
+            - vessel
+        - slurmlogs                             -> log_path
+            - lobe                              -> task_log_dir
+                - 12345_234_train.csv           -> train_log_fpath
+            - vessel
     """
 
     def __init__(self, task, current_time=None, data_path='data_ori_space'):
@@ -100,28 +158,28 @@ class Mypath(object):
     @mkdir_dcrt
     def task_log_dir(self):
         """log directory for the specific task."""
-        task_log_dir = self.log_path + '/' + self.task
+        task_log_dir = os.path.join(self.log_path, self.task)
         return task_log_dir
 
     @mkdir_dcrt
     def task_model_dir(self, current_time=None):
         """Model directory for the specific task"""
         if current_time:
-            task_model_dir = self.model_path + '/' + self.task + "/" + current_time
+            task_model_dir = os.path.join(self.model_path, self.task, current_time)
         else:
-            task_model_dir = self.model_path + '/' + self.task + "/" + self.str_name
+            task_model_dir = os.path.join(self.model_path, self.task, self.str_name)
         return task_model_dir
 
     @mkdir_dcrt
     def train_log_fpath(self):
         """log full path to save training measurements during training."""
         task_log_dir = self.task_model_dir()
-        return task_log_dir + '/' + self.str_name + 'train.csv'
+        return os.path.join(task_log_dir, self.str_name + 'train.csv')
 
     def infer_pred_dir(self, current_time=None):
         task_model_dir = self.task_model_dir(current_time)
         print(f"infer results are saved at {task_model_dir + '/infer_pred'}")
-        return task_model_dir + "/infer_pred"
+        return os.path.join(task_model_dir, "infer_pred")
 
     @mkdir_dcrt
     def model_figure_path(self):
@@ -130,7 +188,7 @@ class Mypath(object):
 
         :return: model figure directory
         """
-        model_figure_path = self.results_path + '/figures'
+        model_figure_path = os.path.join(self.results_path, 'figures')
         return model_figure_path
 
     @mkdir_dcrt
@@ -141,51 +199,44 @@ class Mypath(object):
                 :return: model arguments full path
                 """
         task_model_path = self.task_model_dir()
-        return task_model_path + '/' + self.str_name + '_args.py'
+        return os.path.join(task_model_path, self.str_name + '_args.py')
 
     @mkdir_dcrt
     def model_fpath_best_patch(self, phase, str_name=None):
-        """
-        full path to save best model according to training loss.
-        :return: full path
-        """
+        """Full path to save best model according to training loss. """
         task_model_path = self.task_model_dir()
         if str_name is None:
-            return task_model_path + '/' + self.str_name + '_patch_' + phase + '.pt'
+            return os.path.join(task_model_path, self.str_name + '_patch_' + phase + '.pt')
         else:
-            return task_model_path + '/' + str_name + '_patch_' + phase + '.pt'
+            return os.path.join(task_model_path, str_name + '_patch_' + phase + '.pt')
 
     @mkdir_dcrt
     def model_fpath_best_whole(self, phase='train', str_name=None):
-        """
-        full path to save best model according to training loss.
-        :return: full path
-        """
+        """Full path to save best model according to training loss. """
         task_model_path = self.task_model_dir()
 
         if self.task == "recon":
             if str_name is None:
-                return task_model_path + '/' + self.str_name + '_patch_' + phase + '.pt'
+                return os.path.join(task_model_path, self.str_name + '_patch_' + phase + '.pt')
             else:
-                return task_model_path + '/' + str_name + '_patch_' + phase + '.pt'
+                return os.path.join(task_model_path, str_name + '_patch_' + phase + '.pt')
         else:
             if str_name is None:
-                return task_model_path + '/' + self.str_name + '_' + phase + '.pt'
+                return os.path.join(task_model_path, self.str_name + '_' + phase + '.pt')
             else:
-                return task_model_path + '/' + str_name + '_' + phase + '.pt'
+                return os.path.join(task_model_path, str_name + '_' + phase + '.pt')
 
     @mkdir_dcrt
     def ori_ct_path(self, phase, sub_dir=None):
-        """
-        absolute directory of the original ct for training dataset
+        """Absolute directory of the original ct for training dataset
         :param sub_dir:
         :param phase: 'train' or 'valid'
         :return: directory name
         """
         if sub_dir is None:
-            data_path = self.data_path + '/' + self.task + '/' + phase + '/ori_ct/' + self.data_sub_dir()
+            data_path = os.path.join(self.data_path, self.task, phase, 'ori_ct', self.data_sub_dir())
         else:
-            data_path = self.data_path + '/' + self.task + '/' + phase + '/ori_ct/' + sub_dir
+            data_path = os.path.join(self.data_path, self.task, phase, 'ori_ct', sub_dir)
         return data_path
 
     @mkdir_dcrt
@@ -197,9 +248,9 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            gdth_path = self.data_path + '/' + self.task + '/' + phase + '/gdth_ct/' + self.data_sub_dir()
+            gdth_path = os.path.join(self.data_path, self.task, phase, 'gdth_ct', self.data_sub_dir())
         else:
-            gdth_path = self.data_path + '/' + self.task + '/' + phase + '/gdth_ct/' + sub_dir
+            gdth_path = os.path.join(self.data_path, self.task, phase, 'gdth_ct', sub_dir)
         return gdth_path
 
     @mkdir_dcrt
@@ -212,9 +263,9 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            pred_path = self.results_path + '/' + self.task + '/' + phase + '/pred/' + self.data_sub_dir() + '/' + self.str_name
+            pred_path = os.path.join(self.results_path, self.task, phase, 'pred', self.data_sub_dir(), self.str_name)
         else:
-            pred_path = self.results_path + '/' + self.task + '/' + phase + '/pred/' + sub_dir + '/' + self.str_name
+            pred_path = os.path.join(self.results_path, self.task, phase, 'pred', sub_dir, self.str_name)
         if cntd_pts:
             pred_path += "/cntd_pts"
 
@@ -222,25 +273,24 @@ class Mypath(object):
 
     @mkdir_dcrt
     def dices_fpath(self, phase):
-        """
-        full path of the saved dice
-        :param phase: 'train' or 'valid'
-        :return: file name to save dice
-        """
+        """Full path of the saved dice."""
         pred_path = self.pred_path(phase)
-        return pred_path + '/dices.csv'
+        return os.path.join(pred_path, 'dices.csv')
 
     @mkdir_dcrt
     def all_metrics_fpath(self, phase, fissure=False, sub_dir=data_sub_dir):
-        """
-        full path of the saved dice
-        :param sub_dir:
-        :param fissure:
-        :param phase: 'train' or 'valid'
-        :return: file name to save dice
+        """Full path of the saved dice.
+
+        Args:
+            phase: 'train' or 'valid'
+            fissure:
+            sub_dir:
+
+        Returns:
+
         """
         pred_path = self.pred_path(phase, sub_dir=sub_dir)
         if fissure:
-            return pred_path + '/all_metrics_fissure.csv'
+            return os.path.join(pred_path, 'all_metrics_fissure.csv')
         else:
-            return pred_path + '/all_metrics.csv'
+            return os.path.join(pred_path, 'all_metrics.csv')
