@@ -9,7 +9,7 @@ from typing import Dict, List
 import csv
 import sys
 
-# sys.path.append("../..")
+sys.path.append("../..")
 
 from mt.mymodules.task import TaskArgs
 from mt.mymodules.set_args_mtnet import get_args
