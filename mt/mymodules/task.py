@@ -32,6 +32,7 @@ args = get_args()
 
 
 def get_all_ct_names(path, number=None, prefix=None, name_suffix=None):
+    print(f'data path: {os.path.abspath(path)  }')
     suffix_list = [".nrrd", ".mhd", ".mha", ".nii", ".nii.gz"]  # todo: more suffix
 
     if prefix and name_suffix:
@@ -142,7 +143,7 @@ class TaskArgs:
         self.net.to(self.device)
         self.ld_name: str = ld_name
         self.tr_nb: Union[int] = tr_nb
-        self.tr_nb_cache: int = 200
+        self.tr_nb_cache: int = 2
         self.current_step = 0
 
         self.ds: int = ds
@@ -191,7 +192,6 @@ class TaskArgs:
         elif "yichao" in self.net_name:
             self.infer_loader = self.get_infer_loader(transformmode="infer_patches")
             self.ini_loader = inifite_generator(self.infer_loader, keys=("image",))
-        copy2("../mymodules/set_args_mtnet.py", self.mypath.args_fpath())  # save super parameters
 
     def _get_enc_parameters(self):
         enc_parameters = {}

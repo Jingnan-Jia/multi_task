@@ -4,6 +4,7 @@
 # @Email   : jiajingnan2222@gmail.com
 
 import argparse
+
 def get_args() -> argparse.Namespace:
     """Return arguments for multi-task learning. """
 
@@ -20,7 +21,7 @@ def get_args() -> argparse.Namespace:
                                  "net_recon"
                                  ),default='net_lobe')
     parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lobe')
-    parser.add_argument('--data_path', help='change main task will change it ', type=str, default='data_ori_space')
+    parser.add_argument('--data_path', help='change main task will change it ', type=str, default='data_xy77_z5')
 
     parser.add_argument('--pps', help='patches_per_scan', type=int, default=10)
     parser.add_argument('--amp', help='amp', type=bool, default=True)
@@ -34,7 +35,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--save_w', help='save weights magnitude', type=int, default=0)
 
 
-    parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=1000)  # 144001
+    parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=10)  # 144001
     parser.add_argument('--valid_period1', help='valid_period', type=int, default=10)
     parser.add_argument('--valid_period2', help='valid_period', type=int, default=1)
     parser.add_argument('--cache', help=' cache data or not', type=int, default=1)
