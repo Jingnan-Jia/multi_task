@@ -2,13 +2,13 @@
 # @Time    : 11/21/20 12:10 AM
 # @Author  : Jingnan
 # @Email   : jiajingnan2222@gmail.com
-from mt.mymodules.set_args_mtnet import args
 
 import os
 import time
 import numpy as np
 from functools import wraps
-
+from mt.mymodules.set_args_mtnet import get_args
+args = get_args()
 
 def mkdir_dcrt(fun):  # decorator to create directory if not exist
     """

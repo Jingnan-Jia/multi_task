@@ -15,7 +15,7 @@ from typing import List, Optional, Union, Dict, Tuple
 import monai
 import numpy as np
 import torch
-import util as cu
+import jjnutils.util as cu
 from ignite.contrib.handlers import ProgressBar
 from monai.data import NibabelReader, ITKReader, Dataset
 from monai.handlers import CheckpointSaver, MeanDice, ValidationHandler, StatsHandler
@@ -24,14 +24,97 @@ from monai.transforms import LoadImaged, AddChanneld, Orientationd, Spacingd, Sc
 from torch import nn as nn
 
 from mt.mymodules.mypath import Mypath
-from mt.mymodules.set_args_mtnet import args
-from mt.mymodules.taskargs import CommonTask
+from mt.mymodules.set_args_mtnet import get_args
 from mt.mymodules.data import inifite_generator
-from mt.mymodules.task_supply import DiceCELoss, get_inferer, get_loss
 from mt.mymodules.archive import get_loss_of_multi_output, get_loss_of_1_output, get_loss_of_seg_rec, get_model_path
 
+args = get_args()
 
-class TaskArgs(CommonTask):
+
+def get_all_ct_names(path, number=None, prefix=None, name_suffix=None):
+    suffix_list = [".nrrd", ".mhd", ".mha", ".nii", ".nii.gz"]  # todo: more suffix
+
+    if prefix and name_suffix:
+        files = glob.glob(path + '/' + prefix + "*" + name_suffix + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/' + prefix + "*" + name_suffix + suffix))
+    elif prefix:
+        files = glob.glob(path + '/' + prefix + "*" + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/' + prefix + "*" + suffix))
+    elif name_suffix:
+        if 'SSc' in path:
+            files = glob.glob(path + '/*/' + "*" + name_suffix + '.mha')
+        else:
+            files = glob.glob(path + '/' + "*" + name_suffix + suffix_list[0])
+            for suffix in suffix_list[1:]:
+                files.extend(glob.glob(path + '/' + "*" + name_suffix + suffix))
+
+    else:
+        files = glob.glob(path + '/*' + suffix_list[0])
+        for suffix in suffix_list[1:]:
+            files.extend(glob.glob(path + '/*' + suffix))
+
+    scan_files = sorted(files)
+    if len(scan_files) == 0:
+        raise Exception(f'Scan files are None, please check the data directory: {path}')
+    if isinstance(number, int) and number!=0:
+        scan_files = scan_files[:number]
+    elif isinstance(number, list):  # number = [3,7]
+        scan_files = scan_files[number[0]:number[1]]
+
+    return scan_files
+
+
+
+class DiceCELoss(nn.Module):
+    """Dice and Xentropy loss"""
+
+    def __init__(self):
+        super().__init__()
+        self.dice = monai.losses.DiceLoss(include_background=True, to_onehot_y=True, softmax=True)
+        self.cross_entropy = nn.CrossEntropyLoss()
+
+    def forward(self, y_pred, y_true):
+        dice = self.dice(y_pred, y_true)
+        # CrossEntropyLoss target needs to have shape (B, D, H, W)
+        # Target from pipeline has shape (B, 1, D, H, W)
+        cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
+        print(f"dice loss: {dice}, CE loss: {cross_entropy}")
+        return dice + cross_entropy
+
+
+def get_loss(task: str) -> nn.Module:
+    """Return loss function from its name.
+
+    Args:
+        task: task name
+
+    """
+    loss_fun: nn.Module
+    if task == "recon":
+        loss_fun = nn.MSELoss()  # do not forget parenthesis
+    else:
+        loss_fun = DiceCELoss()  # or FocalLoss
+    return loss_fun
+
+
+
+def get_inferer():
+    """returns a sliding window inference instance."""
+
+    patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
+    sw_batch_size, overlap = args.batch_size, 0.5  # todo: change overlap for inferer
+    inferer = monai.inferers.SlidingWindowInferer(
+        roi_size=patch_size,
+        sw_batch_size=sw_batch_size,
+        overlap=overlap,
+        mode="gaussian",
+        padding_mode="replicate",
+    )
+    return inferer
+
+class TaskArgs:
     """A container. The network's necessary parameters, datasets, training steps are in this container.
 
     """
@@ -49,6 +132,8 @@ class TaskArgs(CommonTask):
                  sub_dir: str
                  ):
         super().__init__()  # set self.device and self.amp
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.amp = True
         self.task: str = task
         self.main_task = None
         self.labels: List[int] = labels
@@ -233,10 +318,10 @@ class TaskArgs(CommonTask):
         # data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
         print(data_dir)
 
-        ct_names: List[str] = cu.get_all_ct_names(data_dir, name_suffix="_ct")
+        ct_names: List[str] = get_all_ct_names(data_dir, name_suffix="_ct")
 
         if self.task != "recon":
-            gdth_names: List[str] = cu.get_all_ct_names(data_dir, name_suffix="_seg")
+            gdth_names: List[str] = get_all_ct_names(data_dir, name_suffix="_seg")
         else:
             gdth_names = ct_names
         train_frac, val_frac = 0.8, 0.2
@@ -341,7 +426,7 @@ class TaskArgs(CommonTask):
             val_data_loader=self.val_loader,
             network=self.net,
             inferer=get_inferer(),
-            post_transform=val_post_transform,
+            postprocessing=val_post_transform,
             key_val_metric={
                 "val_mean_dice": MeanDice(include_background=True,
                                           output_transform=lambda x: (x[keys[0]], x[keys[1]]))
@@ -588,7 +673,7 @@ class TaskArgs(CommonTask):
         if not os.path.exists(submission_dir):
             os.makedirs(submission_dir)
         # files = glob.glob(os.path.join(prediction_folder,"*", "*.nii.gz"))
-        files = cu.get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct_seg")
+        files = get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct_seg")
 
         for f in files:
             new_name = os.path.basename(f)

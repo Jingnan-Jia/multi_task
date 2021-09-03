@@ -11,12 +11,9 @@ import torch
 from torch import nn as nn
 
 from mt.mymodules.custom_net import Encoder, DecoderRec, EnsembleEncRec, DecoderSegRec, EnsembleEncSeg, DecoderSeg
-from mt.mymodules.networks.Generic_UNetPlusPlus import Generic_UNetPlusPlus
-from mt.mymodules.networks.saharnet import Saharnet_encoder, Saharnet_decoder
-from mt.mymodules.networks.unet_att_dsv import unet_CT_single_att_dsv_3D
-from mt.mymodules.set_args_mtnet import args
 from mt.mymodules.task import TaskArgs
-
+from mt.mymodules.set_args_mtnet import get_args
+args = get_args()
 
 def model_summary(model, model_name):
     print(f"=================model_summary: {model_name}==================")
@@ -35,22 +32,6 @@ def model_summary(model, model_name):
     # print("=" * 100)
     # print(f"Total Params:{total_params}")
 
-
-class DiceCELoss(nn.Module):
-    """Dice and Xentropy loss"""
-
-    def __init__(self):
-        super().__init__()
-        self.dice = monai.losses.DiceLoss(include_background=True, to_onehot_y=True, softmax=True)
-        self.cross_entropy = nn.CrossEntropyLoss()
-
-    def forward(self, y_pred, y_true):
-        dice = self.dice(y_pred, y_true)
-        # CrossEntropyLoss target needs to have shape (B, D, H, W)
-        # Target from pipeline has shape (B, 1, D, H, W)
-        cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
-        print(f"dice loss: {dice}, CE loss: {cross_entropy}")
-        return dice + cross_entropy
 
 
 def mt_netname_net(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[str, int], base: int = 1) -> Dict[
@@ -73,11 +54,15 @@ def mt_netname_net(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[st
         else:
             sahar_flag = False
     if sahar_flag:
+        from mt.mymodules.networks.saharnet import Saharnet_encoder
+
         enc = Saharnet_encoder()
     else:
         enc = Encoder(features=(32 * base, 32 * base, 64 * base, 128 * base, 256 * base, 32 * base), dropout=0.1)
     for net_name, label in netname_label_dict.items():
         if "att_unet" in net_name:
+            from mt.mymodules.networks.unet_att_dsv import unet_CT_single_att_dsv_3D
+
             net = unet_CT_single_att_dsv_3D(
                 in_channels=1,
                 n_classes=len(label),
@@ -90,6 +75,7 @@ def mt_netname_net(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[st
                 dropout_prob=0.1
             )
         elif "unetpp" in net_name:
+            from mt.mymodules.networks.Generic_UNetPlusPlus import Generic_UNetPlusPlus
             net = Generic_UNetPlusPlus(1, args.base * 32, len(label), 5)
         elif "vae" in net_name or "VAE" in net_name:  # vae as the reconnet
             net = monai.networks.nets.SegResNetVAE(
@@ -112,6 +98,7 @@ def mt_netname_net(netname_label_dict: Dict[str, List], netname_ds_dict: Dict[st
                 net = EnsembleEncSeg(enc, dec)
             else:
                 if sahar_flag:
+                    from mt.mymodules.networks.saharnet import Saharnet_decoder
                     dec = Saharnet_decoder(out_channels=len(label))
                 else:
                     dec = DecoderSeg(out_channels=len(label),
@@ -148,19 +135,7 @@ def mt_netnames(myargs: argparse.Namespace) -> List[str]:
     return net_names
 
 
-def get_inferer():
-    """returns a sliding window inference instance."""
 
-    patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
-    sw_batch_size, overlap = args.batch_size, 0.5  # todo: change overlap for inferer
-    inferer = monai.inferers.SlidingWindowInferer(
-        roi_size=patch_size,
-        sw_batch_size=sw_batch_size,
-        overlap=overlap,
-        mode="gaussian",
-        padding_mode="replicate",
-    )
-    return inferer
 
 
 def mt_netname_label(net_names: List[str]) -> Dict[str, List[int]]:
@@ -211,19 +186,6 @@ def mt_netname_ds(net_names: List[str]) -> Dict[str, int]:
     return netname_ds_dict
 
 
-def get_loss(task: str) -> nn.Module:
-    """Return loss function from its name.
-
-    Args:
-        task: task name
-
-    """
-    loss_fun: nn.Module
-    if task == "recon":
-        loss_fun = nn.MSELoss()  # do not forget parenthesis
-    else:
-        loss_fun = DiceCELoss()  # or FocalLoss
-    return loss_fun
 
 
 def _mt_netname_ta(netname_label_dict: Dict[str, List],

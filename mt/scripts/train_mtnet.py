@@ -3,25 +3,23 @@
 # @Author  : Jingnan
 # @Email   : jiajingnan2222@gmail.com
 
-# from torch.utils.tensorboard import SummaryWriter
 import os
-
 import torch
-# from CheckpointSaver import CheckpointSaver
-# from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-
-from mt.mymodules.task import TaskArgs
-from mt.mymodules.set_args_mtnet import args
-# from find_connect_parts import write_connected_lobes
-
-
 from typing import Dict, List
 import csv
+import sys
 
+sys.path.append("../..")
+
+from mt.mymodules.task import TaskArgs
+from mt.mymodules.set_args_mtnet import get_args
 from mt.mymodules.task_supply import mt_netnames, mt_netname_ta, mt_tr_ta_list
 
+# from find_connect_parts import write_connected_lobes
+# from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
 
-def train_mtnet():
+
+def train_mtnet(args):
     net_names: List[str] = mt_netnames(args)
     net_ta_dict: Dict[str, TaskArgs] = mt_netname_ta(net_names, args)
 
@@ -61,5 +59,5 @@ def train_mtnet():
 
 
 if __name__ == '__main__':
-
-    train_mtnet()
+    args = get_args()
+    train_mtnet(args)
