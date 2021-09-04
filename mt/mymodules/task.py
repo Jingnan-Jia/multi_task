@@ -143,7 +143,7 @@ class TaskArgs:
         self.net.to(self.device)
         self.ld_name: str = ld_name
         self.tr_nb: Union[int] = tr_nb
-        self.tr_nb_cache: int = 2
+        self.tr_nb_cache: int = 200
         self.current_step = 0
 
         self.ds: int = ds
@@ -330,11 +330,13 @@ class TaskArgs:
         else:
             total_nb = len(ct_names)
         self.n_train: int = int(train_frac * total_nb) + 1  # avoid empty train data
+
         if self.net_name != self.main_net_name:
             self.n_val: int = 5
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             # self.n_val: int = 5
+        self.n_train, self.n_val = 2, 2  # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -450,6 +452,10 @@ class TaskArgs:
 
         return evaluator
 
+    def stop_data_iter(self):
+        print(f'how to stop ?')
+        # self.val_loader
+
     def run_one_step(self, net_ta_dict, idx: int):
         """Run one step.
 
@@ -549,6 +555,7 @@ class TaskArgs:
             print(f"start update cache for task {self.task}")
             self.train_ds.update_cache()
         if args.smartcache and idx == args.step_nb - 1: #or self.n_train > self.tr_nb_cache
+            print(f'shutdown training dataloader')
             self.train_ds.shutdown()
 
         # print statistics
@@ -601,7 +608,7 @@ class TaskArgs:
             valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
-
+        print(f'valid_period: {valid_period}')
         if idx_ % valid_period == (valid_period-1):
             print("start do validation")
             if "net_recon" not in self.net_name:

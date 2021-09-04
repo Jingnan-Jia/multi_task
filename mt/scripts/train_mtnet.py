@@ -23,6 +23,8 @@ def train_mtnet(args):
     net_ta_dict: Dict[str, TaskArgs] = mt_netname_ta(net_names, args)
 
     if args.mode == "train":
+        tr_tas: List[TaskArgs]
+
         if args.train_mode == "stepbystep":  # alternative training
             for idx_ in range(args.step_nb):
                 print('step number: ', idx_)
@@ -52,10 +54,15 @@ def train_mtnet(args):
             tr_tas: List[TaskArgs] = mt_tr_ta_list(net_ta_dict, 0)
             for ta in tr_tas:
                 ta.run_all_epochs()
+
+        for ta in tr_tas:
+            if args.smartcache:  # or self.n_train > self.tr_nb_cache
+                print(f'shutdown training dataloader')
+                ta.train_ds.shutdown()
     else:
         for net_name, ta in net_ta_dict.items():
             ta.infer()
-
+    print('finish!')
 
 if __name__ == '__main__':
     args = get_args()
