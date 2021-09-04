@@ -112,6 +112,7 @@ def get_inferer():
         overlap=overlap,
         mode="gaussian",
         padding_mode="replicate",
+        device=torch.device('cpu')  # avoid CUDA out of memory
     )
     return inferer
 
@@ -336,7 +337,7 @@ class TaskArgs:
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             # self.n_val: int = 5
-        self.n_train, self.n_val = 2, 2  # todo: change it.
+        self.n_train, self.n_val = 5, 5 # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -431,7 +432,8 @@ class TaskArgs:
             postprocessing=val_post_transform,
             key_val_metric={
                 "val_mean_dice": MeanDice(include_background=True,
-                                          output_transform=lambda x: (x[keys[0]], x[keys[1]]))
+                                          output_transform=lambda x: (x[0][keys[0]].to(self.device),
+                                                                      x[0][keys[1]].to(self.device)))
             },
             val_handlers=val_handlers,
             amp=self.amp,
@@ -609,10 +611,12 @@ class TaskArgs:
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
         print(f'valid_period: {valid_period}')
-        if idx_ % valid_period == (valid_period-1):
-            print("start do validation")
-            if "net_recon" not in self.net_name:
-                self.evaluator.run()
+        # if idx_ % valid_period == (valid_period-1):
+        #     print("start do validation")
+
+        if "net_recon" not in self.net_name:
+            print('start evaluate')
+            self.evaluator.run()
 
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir

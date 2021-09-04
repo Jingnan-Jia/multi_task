@@ -62,6 +62,7 @@ def train_mtnet(args):
     else:
         for net_name, ta in net_ta_dict.items():
             ta.infer()
+
     print('finish!')
 
 if __name__ == '__main__':
