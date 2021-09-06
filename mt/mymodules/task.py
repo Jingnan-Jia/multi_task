@@ -84,6 +84,17 @@ class DiceCELoss(nn.Module):
         print(f"dice loss: {dice}, CE loss: {cross_entropy}")
         return dice + cross_entropy
 
+class CELoss(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.cross_entropy = nn.CrossEntropyLoss()
+
+    def forward(self, y_pred, y_true):
+        # CrossEntropyLoss target needs to have shape (B, D, H, W)
+        # Target from pipeline has shape (B, 1, D, H, W)
+        cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
+        return cross_entropy
+
 
 def get_loss(task: str) -> nn.Module:
     """Return loss function from its name.
@@ -93,12 +104,59 @@ def get_loss(task: str) -> nn.Module:
 
     """
     loss_fun: nn.Module
+    print(f'loss: {args.loss}')
     if task == "recon":
         loss_fun = nn.MSELoss()  # do not forget parenthesis
     else:
-        loss_fun = DiceCELoss()  # or FocalLoss
+        if args.loss == "dice":
+            loss_fun = monai.losses.DiceLoss(to_onehot_y=True, softmax=True)
+        elif args.loss == "CE":
+            loss_fun = CELoss()
+        elif args.loss == "dice_CE":
+            loss_fun = DiceCELoss()  # or FocalLoss
     return loss_fun
 
+
+def from_engine(keys, first: bool = False, device=torch.device("cpu")):
+    """
+    Utility function to simplify the `batch_transform` or `output_transform` args of ignite components
+    when handling dictionary or list of dictionaries(for example: `engine.state.batch` or `engine.state.output`).
+    Users only need to set the expected keys, then it will return a callable function to extract data from
+    dictionary and construct a tuple respectively.
+
+    If data is a list of dictionaries after decollating, extract expected keys and construct lists respectively,
+    for example, if data is `[{"A": 1, "B": 2}, {"A": 3, "B": 4}]`, from_engine(["A", "B"]): `([1, 3], [2, 4])`.
+
+    It can help avoid a complicated `lambda` function and make the arg of metrics more straight-forward.
+    For example, set the first key as the prediction and the second key as label to get the expected data
+    from `engine.state.output` for a metric::
+
+        from monai.handlers import MeanDice, from_engine
+
+        metric = MeanDice(
+            include_background=False,
+            output_transform=from_engine(["pred", "label"])
+        )
+
+    Args:
+        keys: specified keys to extract data from dictionary or decollated list of dictionaries.
+        first: whether only extract sepcified keys from the first item if input data is a list of dictionaries,
+            it's used to extract the scalar data which doesn't have batch dim and was replicated into every
+            dictionary when decollating, like `loss`, etc.
+
+
+    """
+    def _wrapper(data):
+        if isinstance(data, dict):
+            return tuple(data[k].to(device) for k in keys)
+        elif isinstance(data, list) and isinstance(data[0], dict):
+            # if data is a list of dictionaries, extract expected keys and construct lists,
+            # if `first=True`, only extract keys from the first item of the list
+            ret = [data[0][k].to(device) if first else [i[k].to(device) for i in data] for k in keys]
+            # ret = [x.to(device) for x in ret]
+            return tuple(ret) if len(ret) > 1 else ret[0]
+
+    return _wrapper
 
 
 def get_inferer():
@@ -337,7 +395,7 @@ class TaskArgs:
         else:
             self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             # self.n_val: int = 5
-        self.n_train, self.n_val = 5, 5 # todo: change it.
+        # self.n_train, self.n_val = 5, 5 # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -356,6 +414,7 @@ class TaskArgs:
         ct_name_list: List[str]
         gdth_name_list: List[str]
         train_files, val_files = self._get_file_names()
+        # train_files, val_files = train_files[:2], val_files[:2]
 
         train_transforms = self._get_xforms("train")
         if args.cache:
@@ -415,7 +474,7 @@ class TaskArgs:
         keys = ("pred", "label")
 
         val_post_transform = monai.transforms.Compose(
-            [AsDiscreted(keys=keys, argmax=(True, False), to_onehot=True, n_classes=self.n_classes)]
+            [ToTensord(keys=("pred", "label")), AsDiscreted(keys=keys, argmax=(True, False), to_onehot=True, n_classes=self.n_classes)]
         )
         val_handlers = [
             ProgressBar(),
@@ -432,8 +491,9 @@ class TaskArgs:
             postprocessing=val_post_transform,
             key_val_metric={
                 "val_mean_dice": MeanDice(include_background=True,
-                                          output_transform=lambda x: (x[0][keys[0]].to(self.device),
-                                                                      x[0][keys[1]].to(self.device)))
+                                          # output_transform=lambda x: (x[keys[0]].to(torch.device('cpu')),
+                                          #                             x[keys[1]].to(torch.device('cpu'))))
+                                            output_transform = from_engine(["pred", "label"]))
             },
             val_handlers=val_handlers,
             amp=self.amp,
@@ -610,13 +670,11 @@ class TaskArgs:
             valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
-        print(f'valid_period: {valid_period}')
-        # if idx_ % valid_period == (valid_period-1):
-        #     print("start do validation")
-
-        if "net_recon" not in self.net_name:
-            print('start evaluate')
-            self.evaluator.run()
+        if idx_ % valid_period == (valid_period-1):
+            print("start do validation")
+            if "net_recon" not in self.net_name:
+                print('start evaluate')
+                self.evaluator.run()
 
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
