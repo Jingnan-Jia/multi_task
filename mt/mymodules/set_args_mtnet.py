@@ -23,8 +23,9 @@ def get_args() -> argparse.Namespace:
                                  ),default='net_lobe')
     parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lobe')
     parser.add_argument('--data_path', help='change main task will change it ', type=str, default='data_ori_space')  # data_xy77_z5
-    parser.add_argument('--loss', help='loss function', choices=('dice', 'CE', 'dice_CE'),
-                        type=str, default='dice')  # balanced_dice, balanced_ce
+    parser.add_argument('--loss', help='loss function', choices=('dice', 'CE', 'dice_CE', 'weighted_dice',
+                                                                 'weighted_CE_fnfp', 'weighted_CE_fn'),
+                        type=str, default='weighted_CE_fn')  # balanced_dice, balanced_ce
 
     parser.add_argument('--pps', help='patches_per_scan', type=int, default=10)
     parser.add_argument('--amp', help='amp', type=bool, default=True)

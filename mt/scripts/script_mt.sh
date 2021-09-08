@@ -24,8 +24,8 @@ cp ../mymodules/set_args_mtnet.py ${slurm_dir}/slurm-${job_id}_set_args_mtnet.py
 
 #export PYTHONPATH="${PYTHONPATH}:/data/jjia/jjnutils/jjnutils"
 
-idx=0; export CUDA_VISIBLE_DEVICES=$idx; stdbuf -oL python -u train_mtnet.py 2>${slurm_dir}/slurm-${job_id}_$idx.err 1>${slurm_dir}/slurm-${job_id}_$idx.out --loss='dice' &
-idx=1; export CUDA_VISIBLE_DEVICES=$idx; stdbuf -oL python -u train_mtnet.py 2>${slurm_dir}/slurm-${job_id}_$idx.err 1>${slurm_dir}/slurm-${job_id}_$idx.out --loss='CE' &
+idx=0; export CUDA_VISIBLE_DEVICES=$idx; stdbuf -oL python -u train_mtnet.py 2>${slurm_dir}/slurm-${job_id}_$idx.err 1>${slurm_dir}/slurm-${job_id}_$idx.out --loss='weighted_CE_fnfp' &
+idx=1; export CUDA_VISIBLE_DEVICES=$idx; stdbuf -oL python -u train_mtnet.py 2>${slurm_dir}/slurm-${job_id}_$idx.err 1>${slurm_dir}/slurm-${job_id}_$idx.out --loss='weighted_CE_fn' &
 
 wait
 
