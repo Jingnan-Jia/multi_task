@@ -290,7 +290,6 @@ class TaskArgs:
             # self.net.enc.named_parameters()[name].grad *= ratio
             # self.enc_parameters[name] *= ratio
 
-
     def _update_gradients(self, loss, amp):
         self.opt.zero_grad()
         if amp:

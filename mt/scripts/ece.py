@@ -7,6 +7,7 @@ import traceback
 import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
+import jjnutils.util as cu
 
 FILE_DIR = Path(__file__).parent.absolute()
 PLOT_DIR = Path(FILE_DIR).joinpath('_tmp')
@@ -231,11 +232,23 @@ def get_ece_global(ece_global):
 
 if __name__ == "__main__":
 
-    patient_ids = ['p0522c0667', 'p0522c0661']
+    ex_id = "1630962918_874"
+    patient_ids = ['26', '27', '29', '30']
+
     ece_global = {}
     for patient_id in patient_ids:
-        y_true, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_true.nrrd'.format(patient_id))))
-        y_predict, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_predict.nrrd'.format(patient_id))))
+        seg_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/lobe/valid_seg" +\
+                    "/GLUCOLD_patients_" + patient_id + "_seg.nii.gz"
+
+        gdt_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/lobe/valid_gdth" +\
+                    "/GLUCOLD_patients_" + patient_id + "_seg.nii.gz"
+
+        y_predict = cu.load_itk(seg_fpath)
+        y_true = cu.load_itk(gdt_fpath)
+
+
+        # y_true, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_true.nrrd'.format(patient_id))))
+        # y_predict, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_predict.nrrd'.format(patient_id))))
         patient_id = patient_id
         ece_global = get_ece_patient(y_true, y_predict, patient_id, ece_global, verbose=True, show=False)
 

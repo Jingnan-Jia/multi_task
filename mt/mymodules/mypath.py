@@ -113,7 +113,7 @@ class Mypath(object):
         # self.module_dir = os.path.dirname(__file__)
         self.data_path = os.path.join('data', data_path)  # data_xy77_z5 or data_ori_space
         self.results_path = os.path.join('results')
-        self.model_path = os.path.join(self.results_path, 'models')
+        self.model_path = self.results_path
         self.log_path = os.path.join(self.results_path, 'slurmlogs')
 
         if current_time:
