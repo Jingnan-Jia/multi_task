@@ -666,13 +666,17 @@ class TaskArgs:
                             n = n + 1.0
                 preds = preds / n
                 if write_pbb_maps:
-                    # pass
+                    # Please note: here the preds resolution may be low. I will keep it to disk to save disk memory.
                     filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
                     pbb_folder = prediction_folder + "/pbb_maps/"
                     npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
                     if not os.path.isdir(pbb_folder):
                         os.makedirs(pbb_folder)
+                    print(f"npyshape: {preds.shape}")
                     np.save(npy_name, preds.cpu())
+                    print(f"low resolution npy data is saved at: {npy_name}")
+
+
                 preds = (preds.argmax(dim=1, keepdims=True)).float()
                 saver.save_batch(preds, infer_data["image_meta_dict"])
 

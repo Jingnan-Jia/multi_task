@@ -8,6 +8,10 @@ import numpy as np
 from pathlib import Path
 import matplotlib.pyplot as plt
 import jjnutils.util as cu
+import torch
+import torch.nn.functional as F
+from scipy.interpolate import interpn
+from skimage.transform import resize
 
 FILE_DIR = Path(__file__).parent.absolute()
 PLOT_DIR = Path(FILE_DIR).joinpath('_tmp')
@@ -237,15 +241,26 @@ if __name__ == "__main__":
 
     ece_global = {}
     for patient_id in patient_ids:
-        seg_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/lobe/valid_seg" +\
-                    "/GLUCOLD_patients_" + patient_id + "_seg.nii.gz"
+        seg_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/valid/pbb_maps" +\
+                    "/GLUCOLD_patients_" + patient_id + "_ct.npy"
 
         gdt_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/lobe/valid_gdth" +\
                     "/GLUCOLD_patients_" + patient_id + "_seg.nii.gz"
 
-        y_predict = cu.load_itk(seg_fpath)
         y_true = cu.load_itk(gdt_fpath)
+        y_true_ts = torch.tensor(y_true)
+        y_true_ts = F.one_hot(y_true_ts.to(torch.int64), num_classes=6)
+        y_true = y_true_ts.numpy()
 
+
+        y_predict = np.load(seg_fpath)
+        y_predict = y_predict[0]
+        y_predict = y_predict.transpose()
+
+        y_predict = resize(y_predict, y_true.shape)
+        print('start save predict')
+        cu.save_itk('predict.mha', y_predict, [1,1,1], [1,1,1], dtype='float')
+        print('finish save predict')
 
         # y_true, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_true.nrrd'.format(patient_id))))
         # y_predict, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_predict.nrrd'.format(patient_id))))

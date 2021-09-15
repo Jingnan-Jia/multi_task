@@ -99,7 +99,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--ld_rc', type=str, default='')
 
     # name of loaded trained model for single-task net
-    parser.add_argument('--infer_data_dir', type=str, default="/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe")
+    parser.add_argument('--infer_data_dir', type=str, default="/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/valid")
 
     #'/data/jjia/monai/data_ori_space/lola11'
     #/data/jjia/monai/data_xy77_z5/lesion
