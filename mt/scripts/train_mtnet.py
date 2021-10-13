@@ -61,7 +61,7 @@ def train_mtnet(args):
                 ta.train_ds.shutdown()
     else:
         for net_name, ta in net_ta_dict.items():
-            ta.infer()
+            ta.infer(write_pbb_maps=True)
 
     print('finish!')
 

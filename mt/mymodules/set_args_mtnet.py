@@ -11,7 +11,7 @@ def get_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Run multi-task UNet segmentation.")
 
     # model_choices = ["net_lobe", "net_vessel", "net_recon", "net_lesion"]
-    parser.add_argument('--mode', choices=("train", "infer"), help='main model ', type=str, default='train')
+    parser.add_argument('--mode', choices=("train", "infer"), help='main model ', type=str, default='infer')
     parser.add_argument('--train_mode', choices=("stepbystep", "onetime"), help='main model ', type=str, default='stepbystep')
     parser.add_argument('--net_names', help='model names', type=str,
                         choices=("net_lobe_itgt", "net_lobe",
@@ -35,7 +35,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument("--patch_z", type=int, default=96, help="patch size along z axis")
     parser.add_argument('--ad_lr', help='adaptive learning rate', type=int, default=0)
     parser.add_argument('--ratio_norm_gradients', help='ratio of norm of gradients to main net', type=float, default=0)
-    parser.add_argument('--fluent_ds', help='fluent_ds', type=int, default=1)
+    parser.add_argument('--fluent_ds', help='fluent_ds', type=int, default=0)
     parser.add_argument('--save_w', help='save weights magnitude', type=int, default=0)
 
 
@@ -92,14 +92,14 @@ def get_args() -> argparse.Namespace:
 
     # name of loaded trained model for single-task net
     parser.add_argument('--ld_ls', type=str, default='')
-    parser.add_argument('--ld_lb', type=str, default='')
+    parser.add_argument('--ld_lb', type=str, default='1631188707_500')
     parser.add_argument('--ld_vs', type=str, default='')
     parser.add_argument('--ld_aw', type=str, default='')
     parser.add_argument('--ld_lu', type=str, default='')
     parser.add_argument('--ld_rc', type=str, default='')
 
     # name of loaded trained model for single-task net
-    parser.add_argument('--infer_data_dir', type=str, default=None)
+    parser.add_argument('--infer_data_dir', type=str, default="/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/valid")
 
     #'/data/jjia/monai/data_ori_space/lola11'
     #/data/jjia/monai/data_xy77_z5/lesion
