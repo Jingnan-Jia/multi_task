@@ -13,12 +13,10 @@ import torch.nn.functional as F
 from scipy.interpolate import interpn
 from skimage.transform import resize
 
-FILE_DIR = Path(__file__).parent.absolute()
-PLOT_DIR = Path(FILE_DIR).joinpath('_tmp')
-Path(PLOT_DIR).mkdir(parents=True, exist_ok=True)
 
 nan_value = -0.1
-
+bin_list = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01]
+bin_count = len(bin_list)
 
 def get_ece_patient(y_true, y_predict, patient_id, res_global, verbose=False, show=False):
     """
@@ -69,20 +67,19 @@ def get_ece_patient(y_true, y_predict, patient_id, res_global, verbose=False, sh
             if len(o_true_label) and len(y_predict_label):
 
                 # Step 2.3 - Bin the probs and calculate their mean
-                y_predict_label_bin_ids = np.digitize(y_predict_label, np.array(
-                    [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01]), right=False) - 1
+                y_predict_label_bin_ids = np.digitize(y_predict_label, np.array(bin_list), right=False) - 1
                 y_predict_binned_vals = [y_predict_label[y_predict_label_bin_ids == bin_id] for bin_id in
-                                         range(label_count)]
+                                         range(bin_count)]
                 y_predict_bins_mean = [np.mean(vals) if len(vals) else nan_value for vals in y_predict_binned_vals]
 
                 # Step 2.4 - Calculate the accuracy of each bin
                 o_predict_label_bins = [o_predict_label[y_predict_label_bin_ids == bin_id] for bin_id in
-                                        range(label_count)]
-                o_true_label_bins = [o_true_label[y_predict_label_bin_ids == bin_id] for bin_id in range(label_count)]
+                                        range(bin_count)]
+                o_true_label_bins = [o_true_label[y_predict_label_bin_ids == bin_id] for bin_id in range(bin_count)]
                 y_predict_bins_accuracy = [np.sum(o_predict_label_bins[bin_id] == o_true_label_bins[bin_id]) / len(
                     o_predict_label_bins[bin_id]) if len(o_predict_label_bins[bin_id]) else nan_value for bin_id in
-                                           range(label_count)]
-                y_predict_bins_len = [len(o_predict_label_bins[bin_id]) for bin_id in range(label_count)]
+                                           range(bin_count)]
+                y_predict_bins_len = [len(o_predict_label_bins[bin_id]) for bin_id in range(bin_count)]
 
                 # Step 2.5 - Wrapup
                 N = np.prod(y_predict_label.shape)
@@ -174,16 +171,16 @@ def get_ece_global(ece_global):
                                                   np.array([0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.01]),
                                                   right=False) - 1
             y_predict_binned_vals = [y_predict_label[y_predict_label_bin_ids == bin_id] for bin_id in
-                                     range(label_count)]
+                                     range(bin_count)]
             y_predict_bins_mean = [np.mean(vals) if len(vals) else nan_value for vals in y_predict_binned_vals]
 
             # Step 1.2 - Calculate the accuracy of each bin
-            o_predict_label_bins = [o_predict_label[y_predict_label_bin_ids == bin_id] for bin_id in range(label_count)]
-            o_true_label_bins = [o_true_label[y_predict_label_bin_ids == bin_id] for bin_id in range(label_count)]
+            o_predict_label_bins = [o_predict_label[y_predict_label_bin_ids == bin_id] for bin_id in range(bin_count)]
+            o_true_label_bins = [o_true_label[y_predict_label_bin_ids == bin_id] for bin_id in range(bin_count)]
             y_predict_bins_accuracy = [np.sum(o_predict_label_bins[bin_id] == o_true_label_bins[bin_id]) / len(
                 o_predict_label_bins[bin_id]) if len(o_predict_label_bins[bin_id]) else nan_value for bin_id in
-                                       range(label_count)]
-            y_predict_bins_len = [len(o_predict_label_bins[bin_id]) for bin_id in range(label_count)]
+                                       range(bin_count)]
+            y_predict_bins_len = [len(o_predict_label_bins[bin_id]) for bin_id in range(bin_count)]
 
             # Step 1.3 - Wrapup
             N = np.prod(y_predict_label.shape)
@@ -236,7 +233,7 @@ def get_ece_global(ece_global):
 
 if __name__ == "__main__":
 
-    ex_id = "1630962918_874"
+    ex_id = "1631188707_500"
     patient_ids = ['26', '27', '29', '30']
 
     ece_global = {}
@@ -244,8 +241,11 @@ if __name__ == "__main__":
         seg_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/valid/pbb_maps" +\
                     "/GLUCOLD_patients_" + patient_id + "_ct.npy"
 
-        gdt_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/lobe/valid_gdth" +\
+        gdt_fpath = "/data/jjia/multi_task/mt/scripts/results/lobe/1630962918_874/infer_pred/lobe/valid_gdth" +\
                     "/GLUCOLD_patients_" + patient_id + "_seg.nii.gz"
+        # FILE_DIR = Path(__file__).parent.absolute()
+        PLOT_DIR = "/data/jjia/multi_task/mt/scripts/results/lobe/" + ex_id + "/infer_pred/valid/"
+        Path(PLOT_DIR).mkdir(parents=True, exist_ok=True)
 
         y_true = cu.load_itk(gdt_fpath)
         y_true_ts = torch.tensor(y_true)
@@ -258,13 +258,20 @@ if __name__ == "__main__":
         y_predict = y_predict.transpose()
 
         y_predict = resize(y_predict, y_true.shape)
-        print('start save predict')
-        cu.save_itk('predict.mha', y_predict, [1,1,1], [1,1,1], dtype='float')
-        print('finish save predict')
+        # print('start save predict')
+        # cu.save_itk('predict.mha', y_predict, [1,1,1], [1,1,1], dtype='float')
+        # print('finish save predict')
+        # print(max(y_predict))
 
         # y_true, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_true.nrrd'.format(patient_id))))
         # y_predict, _ = nrrd.read(str(Path(PLOT_DIR).joinpath('{}_predict.nrrd'.format(patient_id))))
         patient_id = patient_id
+
+        # y_true = y_true[200:250, 200:250,200:250,:]
+        # y_predict = y_predict[200:250, 200:250,200:250,:]
+        # y_true = y_true[center[0]-25:center[0]+25, center[1]-25:center[1]+25,center[2]-25:center[2]+25]
+        # y_predict = y_predict[center[0]-25:center[0]+25, center[1]-25:center[1]+25,center[2]-25:center[2]+25]
+
         ece_global = get_ece_patient(y_true, y_predict, patient_id, ece_global, verbose=True, show=False)
 
     get_ece_global(ece_global)
