@@ -610,10 +610,9 @@ class TaskArgs:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
         print(f'valid_period: {valid_period}')
         # if idx_ % valid_period == (valid_period-1):
-        #     print("start do validation")
 
         if "net_recon" not in self.net_name:
-            print('start evaluate')
+            print("start do validation")
             self.evaluator.run()
 
     def get_infer_loader(self, transformmode="infer"):
