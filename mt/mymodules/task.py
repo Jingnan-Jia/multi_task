@@ -493,7 +493,7 @@ class TaskArgs:
         if mode == "train":
             xforms.extend(
                 [
-                    SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), mode="reflect"),
+                    # SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), mode="minimum"),
                     # ensure at least HTxHT*z
                     RandAffined(
                         keys,
@@ -503,6 +503,7 @@ class TaskArgs:
                         mode=("bilinear", "nearest"),
                         as_tensor_output=False,
                     ),
+                    SpatialPadd(keys, spatial_size=(args.patch_xy, args.patch_xy, args.patch_z), mode="minimum"),
                     RandCropByPosNegLabeld(keys, label_key=keys[1],
                                            spatial_size=(args.patch_xy, args.patch_xy, args.patch_z),
                                            num_samples=args.pps),
@@ -606,13 +607,13 @@ class TaskArgs:
             total_nb = min(self.tr_nb, len(ct_names))  # if set tr_nb
         else:
             total_nb = len(ct_names)
-        self.n_train: int = int(train_frac * total_nb) + 1  # avoid empty train data
+        self.n_train: int = max(int(train_frac * total_nb), 1)  # avoid empty train data
 
         if self.net_name != self.main_net_name:
             self.n_val: int = 5
         else:
-            self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
-            # self.n_val: int = 5
+            # self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
+            self.n_val: int = total_nb - self.n_train
         # self.n_train, self.n_val = 5, 5 # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
@@ -673,6 +674,7 @@ class TaskArgs:
         else:
             # create a validation data loader
             val_transforms = self._get_xforms("val")
+            print('valid files:', val_files)
             val_ds = monai.data.CacheDataset(data=val_files, transform=val_transforms, num_workers=self.load_workers)
             val_loader = monai.data.DataLoader(
                 val_ds,
@@ -825,8 +827,8 @@ class TaskArgs:
         # for
         t2 = time.time()
         print(f"load data cost time {t3 - t1}, one step backward training cost time: {t2 - t8}")
-        if args.ad_lr and self.main_net_name != self.net_name:  # reset lr for aux nets
-            lr = net_ta_dict[self.main_net_name].current_loss / self.current_loss * self.lr
+        if (args.ad_lr!=0) and self.main_net_name != self.net_name:  # reset lr for aux nets
+            lr = net_ta_dict[self.main_net_name].current_loss / self.current_loss * self.lr * args.ad_lr
             self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
             print(f"task: {self.task}, lr: {lr}")
         print(f"task: {self.task}, loss: {loss.item()}")
@@ -888,6 +890,7 @@ class TaskArgs:
             valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
+        print(f"vallid period: {valid_period}")
         if idx_ % valid_period == (valid_period-1):
             print("start do validation")
             if "net_recon" not in self.net_name:
