@@ -395,6 +395,7 @@ class TaskArgs:
             # create a validation data loader
             val_transforms = self._get_xforms("val")
             val_ds = monai.data.CacheDataset(data=val_files, transform=val_transforms, num_workers=self.load_workers)
+            # print(val_ds[0]['pred'].shape, val_ds[0]['label'].shape)
             val_loader = monai.data.DataLoader(
                 val_ds,
                 batch_size=1,  # image-level batch to the sliding window method, not the window-level batch
@@ -430,7 +431,7 @@ class TaskArgs:
             postprocessing=val_post_transform,
             key_val_metric={
                 "val_mean_dice": MeanDice(include_background=True,
-                                          output_transform=lambda x: (x[keys[0]], x[keys[1]]))
+                                          output_transform=lambda x: (x[0][keys[0]], x[0][keys[1]]))
             },
             val_handlers=val_handlers,
             amp=self.amp,
@@ -666,14 +667,15 @@ class TaskArgs:
                             n = n + 1.0
                 preds = preds / n
                 if write_pbb_maps:
-                    # Please note: here the preds resolution may be low. I will keep it to disk to save disk memory.
+                    pred_softmax = torch.softmax(preds, 1)
+                    # Please note: here the pred_softmax resolution may be low. I will keep it to disk to save disk memory.
                     filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
                     pbb_folder = prediction_folder + "/pbb_maps/"
                     npy_name = pbb_folder + filename.split("/")[-1].split(".")[0] + ".npy"
                     if not os.path.isdir(pbb_folder):
                         os.makedirs(pbb_folder)
-                    print(f"npyshape: {preds.shape}")
-                    np.save(npy_name, preds.cpu())
+                    print(f"npyshape: {pred_softmax.shape}")
+                    np.save(npy_name, pred_softmax.cpu())
                     print(f"low resolution npy data is saved at: {npy_name}")
 
 
