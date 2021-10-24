@@ -25,6 +25,8 @@ class Tracker():
         self.task_name = task_name
         self.data_path = data_path
         self.log_dict = {"task_name": task_name}
+    def record(self, key, values):
+        self.log_dict[key] = values
 
     def record_1st(self, args: argparse.Namespace) -> int:
         """First record in this experiment.

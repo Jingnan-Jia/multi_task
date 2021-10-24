@@ -437,7 +437,7 @@ class TaskArgs:
 
 
 
-        self.tracker = Tracker(task_name=self.task, data_path=args.data_path)
+        self.tracker = Tracker(task_name=self.task, data_path=args.data_path)  # record super parameters and metrics
         self.id = self.tracker.record_1st()  # first record, get the id, then have the path.
         self.mypath = Mypath(self.id, task, data_path=args.data_path, check_id_dir=False)
         self.ld_name = ld_name  # for fine-tuning and inference

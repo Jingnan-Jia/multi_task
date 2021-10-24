@@ -21,8 +21,7 @@ from mt.mymodules.task_supply import mt_netnames, mt_netname_ta, mt_tr_ta_list
 def train_mtnet(args):
     net_names: List[str] = mt_netnames(args)
     net_ta_dict: Dict[str, TaskArgs] = mt_netname_ta(net_names, args)
-    for net_name, ta in net_ta_dict.items():
-        ta.tracker.record_1st()
+
     if args.mode == "train":
         tr_tas: List[TaskArgs]
 
@@ -66,7 +65,7 @@ def train_mtnet(args):
             ta.infer()
 
     for net_name, ta in net_ta_dict.items():
-        ta.tracker.record_2nd()
+        ta.tracker.record_2nd()  # save records after all tasks finished.
     print('finish!')
 
 if __name__ == '__main__':
