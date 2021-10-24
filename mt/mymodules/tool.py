@@ -21,7 +21,9 @@ from mt.mymodules.mypath import Mypath as Path
 from mt.mymodules.mypath import PathInit
 
 class Tracker():
-    def __init__(self, task_name):
+    def __init__(self, task_name, data_path='data_ori_space'):
+        self.task_name = task_name
+        self.data_path = data_path
         self.log_dict = {"task_name": task_name}
 
     def record_1st(self, args: argparse.Namespace) -> int:
@@ -44,9 +46,9 @@ class Tracker():
             with open(record_file, 'a'):
                 df, new_id = get_df_id(record_file)
                 if args.mode == 'train':
-                    mypath = Path(new_id, check_id_dir=True)  # to check if id_dir already exist
+                    mypath = Path(new_id,task=self.task_name, data_path='data_ori_space',  check_id_dir=True)  # to check if id_dir already exist
                 else:
-                    mypath = Path(new_id, check_id_dir=False)
+                    mypath = Path(new_id,task=self.task_name, data_path='data_ori_space',  check_id_dir=False)
 
                 start_date = datetime.date.today().strftime("%Y-%m-%d")
                 start_time = datetime.datetime.now().time().strftime("%H:%M:%S")
@@ -106,8 +108,10 @@ class Tracker():
             elapsed_time = time_diff(t1, t2)
             df.at[index, 'elapsed_time'] = elapsed_time
 
-            mypath = Path(current_id)  # evaluate old model
-            df = add_best_metrics(df, mypath, Path(args.ld_name), index)
+            mypath = Path(current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
+            mypath2 = Path(args.ld_name, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
+
+            df = add_best_metrics(df, mypath, mypath2, index)
 
             for key, value in log_dict.items():  # convert numpy to str before writing all log_dict to csv file
                 if type(value) in [np.ndarray, list]:

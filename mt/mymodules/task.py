@@ -435,10 +435,13 @@ class TaskArgs:
         self.main_net = all_nets[self.main_net_name]
         self.keys: Tuple[str, str] = ("pred", "label")
 
-        self.mypath = Mypath(task, data_path=args.data_path)
+
+
+        self.tracker = Tracker(task_name=self.task, data_path=args.data_path)
+        self.id = self.tracker.record_1st()  # first record, get the id, then have the path.
+        self.mypath = Mypath(self.id, task, data_path=args.data_path, check_id_dir=False)
         self.ld_name = ld_name  # for fine-tuning and inference
-        self.ld_path = Mypath(id=self.ld_name, check_id_dir=False)
-        self.tracker = Tracker(task_name=self.task)
+        self.ld_path = Mypath(self.ld_name, task, data_path=args.data_path, check_id_dir=False)
         if ld_name:  # fine-tuning
             self.trained_model_folder = self.ld_path.id_dir
             ckpt = get_model_path(self.trained_model_folder)

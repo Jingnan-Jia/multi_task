@@ -104,7 +104,7 @@ class Mypath(PathInit):
             - vessel
     """
 
-    def __init__(self, id, task, data_path='data_ori_space',  check_id_dir=True):
+    def __init__(self, id, task, data_path='data_ori_space',  check_id_dir=False):
 
         """
         initial valuables.
