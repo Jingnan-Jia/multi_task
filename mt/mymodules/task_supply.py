@@ -346,7 +346,8 @@ def mt_tr_ta_list(net_ta_dict, idx_, main_net_name, fat=1):
     if fat:  # focus-alternative-training
         tr_ta_list: List[TaskArgs] = mt_fat_ta_list(net_ta_dict, main_net_name, idx_)
     else:
-        tr_ta_list: List[TaskArgs] = net_ta_dict
+        net_names, ta_list = list(net_ta_dict.keys()), list(net_ta_dict.values())
+        tr_ta_list: List[TaskArgs] = ta_list
     return tr_ta_list
 
 
