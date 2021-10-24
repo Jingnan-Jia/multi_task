@@ -614,7 +614,7 @@ class TaskArgs:
         else:
             # self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             self.n_val: int = total_nb - self.n_train
-        # self.n_train, self.n_val = 5, 5 # todo: change it.
+        # self.n_train, self.n_val = 2, 2 # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -710,7 +710,7 @@ class TaskArgs:
             inferer=get_inferer(),
             postprocessing=val_post_transform,
             key_val_metric={
-                "val_mean_dice": MeanDice(include_background=True,
+                "val_mean_dice": MeanDice(include_background=False,
                                           # output_transform=lambda x: (x[keys[0]].to(torch.device('cpu')),
                                           #                             x[keys[1]].to(torch.device('cpu'))))
                                             output_transform = from_engine(["pred", "label"]))
@@ -890,12 +890,14 @@ class TaskArgs:
             valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
-        print(f"vallid period: {valid_period}")
+        # print(f"vallid period: {valid_period}")
         if idx_ % valid_period == (valid_period-1):
             print("start do validation")
             if "net_recon" not in self.net_name:
                 print('start evaluate')
+                t1 = time.time()
                 self.evaluator.run()
+                print(f"evaluation cost time : {int(time.time() - t1)} seconds")
 
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
