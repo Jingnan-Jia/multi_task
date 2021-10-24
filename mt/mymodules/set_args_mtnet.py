@@ -13,14 +13,13 @@ def get_args() -> argparse.Namespace:
     # model_choices = ["net_lobe", "net_vessel", "net_recon", "net_lesion"]
     parser.add_argument('--mode', choices=("train", "infer"), help='main model ', type=str, default='train')
     parser.add_argument('--train_mode', choices=("stepbystep", "onetime"), help='main model ', type=str, default='stepbystep')
-    parser.add_argument('--net_names', help='model names', type=str,
-                        choices=("net_lobe_itgt", "net_lobe",
-                                 "net_vessel_itgt", "net_vessel",
-                                 "net_airway_itgt", "net_airway",
-                                 "net_lung_itgt", "net_lung",
-                                 "net_lesion_itgt", "net_lesion"
-                                 "net_recon"
-                                 ),default='net_lobe')
+    parser.add_argument('--net_names', help='model names', type=str,default='net_lobe')
+    #                         choices consist of ("net_lobe_itgt", "net_lobe",
+    #                                  "net_vessel_itgt", "net_vessel",
+    #                                  "net_airway_itgt", "net_airway",
+    #                                  "net_lung_itgt", "net_lung",
+    #                                  "net_lesion_itgt", "net_lesion"
+    #                                  "net_recon")
     parser.add_argument('--main_net_name', help='main model ', type=str, default='net_lobe')
     parser.add_argument('--data_path', help='change main task will change it ', type=str, default='data_ori_space')  # data_xy77_z5
     parser.add_argument('--loss', help='loss function', choices=('dice', 'CE', 'dice_CE', 'weighted_dice',
@@ -33,7 +32,7 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--base', help='base', type=int, default=1)
     parser.add_argument("--patch_xy", type=int, default=192, help="patch size along x and y axis")
     parser.add_argument("--patch_z", type=int, default=96, help="patch size along z axis")
-    parser.add_argument('--ad_lr', help='adaptive learning rate', type=int, default=0)
+    parser.add_argument('--ad_lr', help='adaptive learning rate, lambda', type=float, default=0.1)
     parser.add_argument('--ratio_norm_gradients', help='ratio of norm of gradients to main net', type=float, default=0)
     parser.add_argument('--fluent_ds', help='fluent_ds', type=int, default=1)
     parser.add_argument('--save_w', help='save weights magnitude', type=int, default=0)
@@ -50,12 +49,12 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('-cntd_pts', '--cntd_pts', help='connected parts for postprocessing', type=int, default=0)
 
     # learning rate, normally lr of main model is greater than others
-    parser.add_argument('-lr_ls', '--lr_ls', type=float, default=0.00001)
-    parser.add_argument('-lr_lb', '--lr_lb', type=float, default=0.00001)
-    parser.add_argument('-lr_vs', '--lr_vs', type=float, default=0.0001)
-    parser.add_argument('-lr_aw', '--lr_aw', type=float, default=0.00001)
-    parser.add_argument('-lr_lu', '--lr_lu', type=float, default=0.00001)
-    parser.add_argument('-lr_rc', '--lr_rc', type=float, default=0.00001)
+    parser.add_argument('--lr_ls', type=float, default=0.00001)
+    parser.add_argument('--lr_lb', type=float, default=0.0001)
+    parser.add_argument('--lr_vs', type=float, default=0.00001)
+    parser.add_argument('--lr_aw', type=float, default=0.00001)
+    parser.add_argument('--lr_lu', type=float, default=0.00001)
+    parser.add_argument('--lr_rc', type=float, default=0.00001)
 
 
     # Number of Deep Supervisors

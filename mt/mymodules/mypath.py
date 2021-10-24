@@ -35,20 +35,24 @@ def mkdir_dcrt(fun):  # decorator to create directory if not exist
 
     return decorated
 
+class PathInit():
+    def __init__(self):
+        self.record_file = 'records.csv'
 
-class Mypath(object):
+
+class Mypath(PathInit):
     """
     Here, I use 'fpath' to indicatate full file path and name, 'path' to respresent the directory,
     'file_name' to respresent the file name in the parent directory.
 
-    The old path structure looks like:
+    The new path structure looks like:
 
     - data_ori_space                            -> data_path
         - lobe                                  -> data_task_dir
             - LOLA11                            -> data_task_sub_dir
         - vessel
 
-    - results                                   -> results_path
+    - results                                   -> results_dir
         - lobe
             - 12345_234
                 - LOLA11
@@ -76,7 +80,7 @@ class Mypath(object):
                     - LOLA11                    -> gdth_path
         - vessel
 
-    - results                                   -> results_path
+    - results                                   -> results_dir
         - lobe
             - train
                 - pred
@@ -88,7 +92,7 @@ class Mypath(object):
         - figures                               -> model_figure_path
         - models                                -> model_path
             - lobe
-                - 12345_234                     -> task_model_dir
+                - 12345_234                     -> id_dir
                     - infer_pred                -> infer_pred_dir
                     - 12345_234_args.py
                     - 12345_234_patch_train.pt  -> model_fpath_best_patch
@@ -100,7 +104,7 @@ class Mypath(object):
             - vessel
     """
 
-    def __init__(self, task, current_time=None, data_path='data_ori_space'):
+    def __init__(self, id, task, data_path='data_ori_space',  check_id_dir=True):
 
         """
         initial valuables.
@@ -108,18 +112,35 @@ class Mypath(object):
         :param task: task name, e.g. 'lobe'
         :param current_time: a string represent the current time. It is used to name models and log files. If None, the time will be generated automatically.
         """
+        super().__init__()
+        # two top level directories
+        self.data_dir = 'data'
+        self.results_dir = 'results'
 
         self.task = task
+        self.task_dir = os.path.join(self.results_dir, self.task)
         # self.module_dir = os.path.dirname(__file__)
         self.data_path = os.path.join('data', data_path)  # data_xy77_z5 or data_ori_space
-        self.results_path = os.path.join('results')
-        self.model_path = self.results_path
-        self.log_path = os.path.join(self.results_path, 'slurmlogs')
+        self.log_dir = os.path.join(self.results_dir, 'slurmlogs')
 
-        if current_time:
-            self.str_name = current_time
+        if isinstance(id, (int, float)):
+            self.id = str(int(id))
         else:
-            self.str_name = str(int(time.time())) + '_' + str(np.random.randint(1000))
+            self.id = id  # id should be string
+
+        self.id_dir = os.path.join(self.self.task_dir, str(id))  # results/lobe/12
+        if check_id_dir:  # when infer, do not check
+            if os.path.isdir(self.id_dir):  # the dir for this id already exist
+                raise Exception('The same id_dir already exists', self.id_dir)
+
+        for directory in [self.log_dir, self.results_dir, self.task_dir, self.id_dir]:
+            if not os.path.isdir(directory):
+                os.makedirs(directory)
+                print('successfully create directory:', directory)
+
+        self.model_fpath = os.path.join(self.id_dir, 'model.pt')
+        self.model_wt_structure_fpath = os.path.join(self.id_dir, 'model_wt_structure.pt')
+
 
     def data_sub_dir(self):
         """
@@ -158,28 +179,18 @@ class Mypath(object):
     @mkdir_dcrt
     def task_log_dir(self):
         """log directory for the specific task."""
-        task_log_dir = os.path.join(self.log_path, self.task)
+        task_log_dir = os.path.join(self.log_dir, self.task)
         return task_log_dir
 
     @mkdir_dcrt
-    def task_model_dir(self, current_time=None):
-        """Model directory for the specific task"""
-        if current_time:
-            task_model_dir = os.path.join(self.model_path, self.task, current_time)
-        else:
-            task_model_dir = os.path.join(self.model_path, self.task, self.str_name)
-        return task_model_dir
-
-    @mkdir_dcrt
-    def train_log_fpath(self):
+    def metrics_fpath(self, phase='train'):
         """log full path to save training measurements during training."""
-        task_log_dir = self.task_model_dir()
-        return os.path.join(task_log_dir, self.str_name + 'train.csv')
+        return os.path.join(self.id_dir, phase + '_metrics.csv')
 
-    def infer_pred_dir(self, current_time=None):
-        task_model_dir = self.task_model_dir(current_time)
-        print(f"infer results are saved at {task_model_dir + '/infer_pred'}")
-        return os.path.join(task_model_dir, "infer_pred")
+    def infer_pred_dir(self):
+        infer_pred_dir = os.path.join(self.id_dir, "infer_pred")
+        print(f"infer results are saved at {infer_pred_dir}")
+        return infer_pred_dir
 
     @mkdir_dcrt
     def model_figure_path(self):
@@ -188,43 +199,30 @@ class Mypath(object):
 
         :return: model figure directory
         """
-        model_figure_path = os.path.join(self.results_path, 'figures')
+        model_figure_path = os.path.join(self.results_dir, 'figures')
         return model_figure_path
 
     @mkdir_dcrt
-    def args_fpath(self):
-        """
-                full path of model arguments.
-
-                :return: model arguments full path
-                """
-        task_model_path = self.task_model_dir()
-        return os.path.join(task_model_path, self.str_name + '_args.py')
-
-    @mkdir_dcrt
-    def model_fpath_best_patch(self, phase, str_name=None):
+    def model_fpath_best_patch(self, phase, id=None):
         """Full path to save best model according to training loss. """
-        task_model_path = self.task_model_dir()
-        if str_name is None:
-            return os.path.join(task_model_path, self.str_name + '_patch_' + phase + '.pt')
+        if ex_id is None:
+            return os.path.join(self.id_dir, self.id + '_patch_' + phase + '.pt')
         else:
-            return os.path.join(task_model_path, str_name + '_patch_' + phase + '.pt')
+            return os.path.join(self.id_dir, id + '_patch_' + phase + '.pt')
 
     @mkdir_dcrt
-    def model_fpath_best_whole(self, phase='train', str_name=None):
+    def model_fpath_best_whole(self, phase='train', id=None):
         """Full path to save best model according to training loss. """
-        task_model_path = self.task_model_dir()
-
         if self.task == "recon":
-            if str_name is None:
-                return os.path.join(task_model_path, self.str_name + '_patch_' + phase + '.pt')
+            if id is None:
+                return os.path.join(self.id_dir, self.id + '_patch_' + phase + '.pt')
             else:
-                return os.path.join(task_model_path, str_name + '_patch_' + phase + '.pt')
+                return os.path.join(self.id_dir, id + '_patch_' + phase + '.pt')
         else:
-            if str_name is None:
-                return os.path.join(task_model_path, self.str_name + '_' + phase + '.pt')
+            if id is None:
+                return os.path.join(self.id_dir, self.id + '_' + phase + '.pt')
             else:
-                return os.path.join(task_model_path, str_name + '_' + phase + '.pt')
+                return os.path.join(self.id_dir, id + '_' + phase + '.pt')
 
     @mkdir_dcrt
     def ori_ct_path(self, phase, sub_dir=None):
@@ -263,9 +261,9 @@ class Mypath(object):
         :return: directory name
         """
         if sub_dir is None:
-            pred_path = os.path.join(self.results_path, self.task, phase, 'pred', self.data_sub_dir(), self.str_name)
+            pred_path = os.path.join(self.results_dir, self.task, phase, 'pred', self.data_sub_dir(), self.id)
         else:
-            pred_path = os.path.join(self.results_path, self.task, phase, 'pred', sub_dir, self.str_name)
+            pred_path = os.path.join(self.results_dir, self.task, phase, 'pred', sub_dir, self.id)
         if cntd_pts:
             pred_path += "/cntd_pts"
 

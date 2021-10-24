@@ -29,8 +29,7 @@ from monai.data.utils import create_file_basename
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-from monai.handlers import StatsHandler, MeanDice, ValidationHandler
-from CheckpointSaver import CheckpointSaver
+from monai.handlers import StatsHandler, MeanDice, ValidationHandler, CheckpointSaver
 from monai.transforms import (
     AddChanneld,
     AsDiscreted,

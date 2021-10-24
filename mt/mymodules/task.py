@@ -22,6 +22,7 @@ from monai.handlers import CheckpointSaver, MeanDice, ValidationHandler, StatsHa
 from monai.transforms import LoadImaged, AddChanneld, Orientationd, Spacingd, ScaleIntensityRanged, SpatialPadd, \
     RandAffined, RandCropByPosNegLabeld, RandGaussianNoised, RandSpatialCropd, CastToTyped, ToTensord, AsDiscreted
 from torch import nn as nn
+from mt.mymodules.tool import Tracker
 
 from mt.mymodules.mypath import Mypath
 from mt.mymodules.set_args_mtnet import get_args
@@ -436,9 +437,10 @@ class TaskArgs:
 
         self.mypath = Mypath(task, data_path=args.data_path)
         self.ld_name = ld_name  # for fine-tuning and inference
-
+        self.ld_path = Mypath(id=self.ld_name, check_id_dir=False)
+        self.tracker = Tracker(task_name=self.task)
         if ld_name:  # fine-tuning
-            self.trained_model_folder = self.mypath.task_model_dir(current_time=self.ld_name)
+            self.trained_model_folder = self.ld_path.id_dir
             ckpt = get_model_path(self.trained_model_folder)
             self.net.load_state_dict(torch.load(ckpt, map_location=self.device))
             print(f'load model from {ckpt}')
@@ -845,11 +847,11 @@ class TaskArgs:
         if idx % self.steps_per_epoch == 0:  # print every 2000 mini-batches
             ave_tr_loss = self.accumulate_loss / self.steps_per_epoch
             print(f'step: {idx} average training loss: {ave_tr_loss}')
-            if not os.path.isfile(self.mypath.train_log_fpath()):
-                with open(self.mypath.train_log_fpath(), 'a') as csv_file:
+            if not os.path.isfile(self.mypath.metrics_fpath('train')):
+                with open(self.mypath.metrics_fpath('train'), 'a') as csv_file:
                     writer = csv.writer(csv_file, delimiter=',')
                     writer.writerow(["step ", "ave_tr_loss"])
-            with open(self.mypath.train_log_fpath(), 'a') as csv_file:
+            with open(self.mypath.metrics_fpath('train'), 'a') as csv_file:
                 writer = csv.writer(csv_file, delimiter=',')
                 writer.writerow([idx, ave_tr_loss])
             self.accumulate_loss = 0.0
@@ -926,7 +928,7 @@ class TaskArgs:
         print("start infer")
         keys = ("image",)
         self.net.eval()
-        prediction_folder = self.mypath.infer_pred_dir(self.ld_name) + "/" + args.infer_data_dir.split("/")[-1]
+        prediction_folder = self.ld_path.infer_pred_dir() + "/" + args.infer_data_dir.split("/")[-1]
         print(prediction_folder)
         inferer = get_inferer()
         saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
