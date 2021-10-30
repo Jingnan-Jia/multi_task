@@ -21,10 +21,14 @@ from mt.mymodules.mypath import Mypath as Path
 from mt.mymodules.mypath import PathInit
 
 class Tracker():
-    def __init__(self, task_name, data_path='data_ori_space'):
+    def __init__(self, task_name, data_path='data_ori_space', ld_name=None):
         self.task_name = task_name
         self.data_path = data_path
         self.log_dict = {"task_name": task_name}
+        self.current_id = None
+        self.args = None
+        self.record_file = PathInit(self.task_name).record_file
+        self.ld_name = ld_name
     def record(self, key, values):
         self.log_dict[key] = values
 
@@ -42,11 +46,12 @@ class Tracker():
             :func:`ssc_scoring.run` and :func:`ssc_scoring.run_pos`
 
         """
-        record_file = PathInit().record_file
-        lock = FileLock(record_file + ".lock")  # lock the file, avoid other processes write other things
+        self.args = args
+        lock = FileLock(self.record_file + ".lock")  # lock the file, avoid other processes write other things
         with lock:  # with this lock,  open a file for exclusive access
-            with open(record_file, 'a'):
-                df, new_id = get_df_id(record_file)
+            with open(self.record_file, 'a'):
+                df, new_id = get_df_id(self.record_file)
+                self.current_id = new_id
                 if args.mode == 'train':
                     mypath = Path(new_id,task=self.task_name, data_path='data_ori_space',  check_id_dir=True)  # to check if id_dir already exist
                 else:
@@ -58,27 +63,27 @@ class Tracker():
                 idatime = {'ID': new_id, 'start_date': start_date, 'start_time': start_time}
                 args_dict = vars(args)
                 idatime.update(args_dict)  # followed by super parameters
+
                 if len(df) == 0:  # empty file
                     df = pd.DataFrame([idatime])  # need a [] , or need to assign the index for df
                 else:
                     index = df.index.to_list()[-1]  # last index
                     for key, value in idatime.items():  # write new line
-                        df.at[index + 1, key] = value  #
+                        try:
+                            df.at[index + 1, key] = value  #
+                        except:
+                            df[key] = df[key].astype('object')
+                            df.at[index + 1, key] = value  #
 
                 df = fill_running(df)  # fill the state information for other experiments
                 df = correct_type(df)  # aviod annoying thing like: ID=1.00
-                write_and_backup(df, record_file, mypath)
+                write_and_backup(df, self.record_file, mypath)
         return new_id
 
-    def record_2nd(self, current_id: int, log_dict: dict, args: argparse.Namespace) -> None:
+    def record_2nd(self) -> None:
         """Second time to save logs.
 
         Args:
-            task: 'score' or 'pos' for score and position prediction respectively.
-            current_id: Current experiment ID
-            log_dict: dict to save super-parameters and metrics
-            args: arguments
-
         Returns:
             None. log_dict saved to disk.
 
@@ -86,11 +91,12 @@ class Tracker():
             :func:`ssc_scoring.run` and :func:`ssc_scoring.run_pos`
 
         """
-        record_file = PathInit().record_file
-        lock = FileLock(record_file + ".lock")
+        lock = FileLock(self.record_file + ".lock")
         with lock:  # with this lock,  open a file for exclusive access
-            df = pd.read_csv(record_file)
-            index = df.index[df['ID'] == current_id].to_list()
+            print("record path", os.path.realpath(self.record_file))
+            df = pd.read_csv(os.path.realpath(self.record_file), delimiter=',')
+            print('df', df)
+            index = df.index[df['ID'] == self.current_id].to_list()
             if len(index) > 1:
                 raise Exception("over 1 row has the same id", id)
             elif len(index) == 0:  # only one line,
@@ -110,12 +116,12 @@ class Tracker():
             elapsed_time = time_diff(t1, t2)
             df.at[index, 'elapsed_time'] = elapsed_time
 
-            mypath = Path(current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
-            mypath2 = Path(args.ld_name, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
+            mypath = Path(self.current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
+            mypath2 = Path(self.ld_name, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
 
             df = add_best_metrics(df, mypath, mypath2, index)
 
-            for key, value in log_dict.items():  # convert numpy to str before writing all log_dict to csv file
+            for key, value in self.log_dict.items():  # convert numpy to str before writing all self.log_dict to csv file
                 if type(value) in [np.ndarray, list]:
                     str_v = ''
                     for v in value:
@@ -130,12 +136,12 @@ class Tracker():
                 if type(df[column].to_list()[-1]) is int:
                     df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
 
-            args_dict = vars(args)
-            args_dict.update({'ID': current_id})
+            args_dict = vars(self.args)
+            args_dict.update({'ID': self.current_id})
             for column in df:
                 if column in args_dict.keys() and type(args_dict[column]) is int:
                     df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
-            write_and_backup(df, record_file, mypath)
+            write_and_backup(df, self.record_file, mypath)
 
 
 def get_loss_min(fpath: str) -> float:
@@ -202,7 +208,8 @@ def add_best_metrics(df: pd.DataFrame,
 
     """
     modes = ['train', 'valid', 'test']
-    metrics_max = 'dice'
+
+    metrics_max = 'dice_ex_bg'
     df.at[index, 'metrics_max'] = metrics_max
 
     for mode in modes:
@@ -220,8 +227,14 @@ def add_best_metrics(df: pd.DataFrame,
                     continue
 
             best_index = loss_df[metrics_max].idxmax()
-            loss = loss_df['dice'][best_index]
-        df.at[index, mode + '_dice'] = round(loss, 3)
+            if mode == 'train':
+                metrics_ls = ['loss', 'dice_ex_bg', 'dice_inc_bg']
+            elif mode == 'valid':
+                metrics_ls = ['loss', 'dice_ex_bg', 'dice_inc_bg']
+
+            for metric in metrics_ls:
+                df.at[index, mode + '_' + metric] = round( loss_df[metric][best_index], 3)
+
     return df
 
 
@@ -241,7 +254,8 @@ def write_and_backup(df: pd.DataFrame, record_file: str, mypath: Path) -> None:
 
     """
     df.to_csv(record_file, index=False)
-    shutil.copy(record_file, os.path.join(mypath.results_dir, 'cp_' + os.path.basename(record_file)))
+    shutil.copy(record_file, os.path.join(os.path.dirname(record_file),
+                                          'cp_' + os.path.basename(record_file)))
     df_lastrow = df.iloc[[-1]]
     df_lastrow.to_csv(os.path.join(mypath.id_dir, os.path.basename(record_file)),
                       index=False)  # save the record of the current ex
@@ -409,17 +423,17 @@ def record_gpu_info(outfile) -> Tuple:
         handle = nvidia_smi.nvmlDeviceGetHandleByIndex(gpuid)
         gpuname = nvidia_smi.nvmlDeviceGetName(handle)
         gpuname = gpuname.decode("utf-8")
-        # log_dict['gpuname'] = gpuname
+        # self.log_dict['gpuname'] = gpuname
         info = nvidia_smi.nvmlDeviceGetMemoryInfo(handle)
         gpu_mem_usage = str(_bytes_to_megabytes(info.used)) + '/' + str(_bytes_to_megabytes(info.total)) + ' MB'
-        # log_dict['gpu_mem_usage'] = gpu_mem_usage
+        # self.log_dict['gpu_mem_usage'] = gpu_mem_usage
         gpu_util = 0
         for i in range(5):
             res = nvidia_smi.nvmlDeviceGetUtilizationRates(handle)
             gpu_util += res.gpu
             time.sleep(1)
         gpu_util = gpu_util / 5
-        # log_dict['gpu_util'] = str(gpu_util) + '%'
+        # self.log_dict['gpu_util'] = str(gpu_util) + '%'
         return gpuname, gpu_mem_usage, str(gpu_util) + '%'
     else:
         print('outfile is None, can not show GPU memory info')
