@@ -435,10 +435,8 @@ class TaskArgs:
         self.main_net = all_nets[self.main_net_name]
         self.keys: Tuple[str, str] = ("pred", "label")
 
-
-
-        self.tracker = Tracker(task_name=self.task, data_path=args.data_path)  # record super parameters and metrics
-        self.id = self.tracker.record_1st()  # first record, get the id, then have the path.
+        self.tracker = Tracker(task_name=self.task, data_path=args.data_path, ld_name=ld_name)  # record super parameters and metrics
+        self.id = self.tracker.record_1st(args)  # first record, get the id, then have the path.
         self.mypath = Mypath(self.id, task, data_path=args.data_path, check_id_dir=False)
         self.ld_name = ld_name  # for fine-tuning and inference
         self.ld_path = Mypath(self.ld_name, task, data_path=args.data_path, check_id_dir=False)
@@ -597,9 +595,9 @@ class TaskArgs:
     def _get_file_names(self):
         """Return 2 lists of training and validation file names."""
         keys = ("image", "label")
-        data_dir = self.mypath.data_dir()
+        data_dir = self.mypath.data_task_dir
         # data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
-        print(data_dir)
+        print(f'data dir: {data_dir}')
 
         ct_names: List[str] = get_all_ct_names(data_dir, name_suffix="_ct")
 
@@ -619,7 +617,7 @@ class TaskArgs:
         else:
             # self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             self.n_val: int = total_nb - self.n_train
-        # self.n_train, self.n_val = 2, 2 # todo: change it.
+        self.n_train, self.n_val = 2, 2 # todo: change it.
 
         logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
 
@@ -703,7 +701,7 @@ class TaskArgs:
         )
         val_handlers = [
             ProgressBar(),
-            CheckpointSaver(save_dir=self.mypath.task_model_dir(),
+            CheckpointSaver(save_dir=self.mypath.id_dir,
                             save_dict={"net": self.net},
                             save_key_metric=True,
                             key_metric_n_saved=3),
@@ -714,24 +712,27 @@ class TaskArgs:
             network=self.net,
             inferer=get_inferer(),
             postprocessing=val_post_transform,
-            key_val_metric={
-                "val_mean_dice": MeanDice(include_background=False,
+            key_val_metric={"dice_ex_bg": MeanDice(include_background=False,
                                           # output_transform=lambda x: (x[keys[0]].to(torch.device('cpu')),
                                           #                             x[keys[1]].to(torch.device('cpu'))))
                                             output_transform = from_engine(["pred", "label"]))
             },
+            additional_metrics={"dice_inc_bg": MeanDice(include_background=True,
+                                                        output_transform = from_engine(["pred", "label"]))},
             val_handlers=val_handlers,
             amp=self.amp,
         )
 
         def record_val_metrics(engine):
             engine.state.epoch = int(self.current_step / (self.steps_per_epoch + 0.1))
-            val_log_dir = self.mypath.task_model_dir() + '/' + self.mypath.str_name + 'val_log.csv'
+            val_log_dir = self.mypath.metrics_fpath('valid')
             if os.path.exists(val_log_dir):
                 val_log = np.genfromtxt(val_log_dir, dtype='str', delimiter=',')
             else:
-                val_log = ['epoch', 'val_dice']
-            val_log = np.vstack([val_log, [engine.state.epoch, round(engine.state.metrics["val_mean_dice"], 4)]])
+                val_log = ['epoch', 'dice_ex_bg', 'dice_inc_bg']
+            val_log = np.vstack([val_log, [engine.state.epoch,
+                                           round(engine.state.metrics["dice_ex_bg"], 3),
+                                           round(engine.state.metrics["dice_inc_bg"], 3),]])
             np.savetxt(val_log_dir, val_log, fmt='%s', delimiter=',')
 
         from ignite.engine import Events
@@ -853,7 +854,7 @@ class TaskArgs:
             if not os.path.isfile(self.mypath.metrics_fpath('train')):
                 with open(self.mypath.metrics_fpath('train'), 'a') as csv_file:
                     writer = csv.writer(csv_file, delimiter=',')
-                    writer.writerow(["step ", "ave_tr_loss"])
+                    writer.writerow(["step", "ave_loss_in_epoch"])
             with open(self.mypath.metrics_fpath('train'), 'a') as csv_file:
                 writer = csv.writer(csv_file, delimiter=',')
                 writer.writerow([idx, ave_tr_loss])
