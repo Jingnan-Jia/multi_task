@@ -36,8 +36,14 @@ def mkdir_dcrt(fun):  # decorator to create directory if not exist
     return decorated
 
 class PathInit():
-    def __init__(self):
-        self.record_file = 'records.csv'
+    def __init__(self, task):
+
+        self.data_dir = 'data'
+        self.results_dir = 'results'
+
+        self.task = task
+        self.task_dir = os.path.join(self.results_dir, self.task)
+        self.record_file = os.path.join(self.results_dir, self.task + '_records.csv')
 
 
 class Mypath(PathInit):
@@ -112,15 +118,12 @@ class Mypath(PathInit):
         :param task: task name, e.g. 'lobe'
         :param current_time: a string represent the current time. It is used to name models and log files. If None, the time will be generated automatically.
         """
-        super().__init__()
+        super().__init__(task)
         # two top level directories
-        self.data_dir = 'data'
-        self.results_dir = 'results'
 
-        self.task = task
-        self.task_dir = os.path.join(self.results_dir, self.task)
         # self.module_dir = os.path.dirname(__file__)
-        self.data_path = os.path.join('data', data_path)  # data_xy77_z5 or data_ori_space
+        self.data_path = os.path.join(self.data_dir, data_path)  # data_xy77_z5 or data_ori_space
+        self.data_task_dir = os.path.join(self.data_path, self.task)
         self.log_dir = os.path.join(self.results_dir, 'slurmlogs')
 
         if isinstance(id, (int, float)):
@@ -128,7 +131,7 @@ class Mypath(PathInit):
         else:
             self.id = id  # id should be string
 
-        self.id_dir = os.path.join(self.self.task_dir, str(id))  # results/lobe/12
+        self.id_dir = os.path.join(self.task_dir, str(id))  # results/lobe/12
         if check_id_dir:  # when infer, do not check
             if os.path.isdir(self.id_dir):  # the dir for this id already exist
                 raise Exception('The same id_dir already exists', self.id_dir)
