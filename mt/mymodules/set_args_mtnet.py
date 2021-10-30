@@ -38,8 +38,8 @@ def get_args() -> argparse.Namespace:
     parser.add_argument('--save_w', help='save weights magnitude', type=int, default=0)
 
 
-    parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=144001)  # 144001
-    parser.add_argument('--valid_period1', help='valid_period', type=int, default=20)
+    parser.add_argument('-step_nb', '--step_nb', help='training step', type=int, default=1)  # 144001
+    parser.add_argument('--valid_period1', help='valid_period', type=int, default=1)
     parser.add_argument('--valid_period2', help='valid_period', type=int, default=2)
     parser.add_argument('--cache', help=' cache data or not', type=int, default=1)
     parser.add_argument('--smartcache', help='smart cache data', type=int, default=0)
