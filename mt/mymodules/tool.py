@@ -8,8 +8,8 @@ import os
 import shutil
 import time
 from typing import Union, Tuple
+import threading
 
-import myutil.myutil as futil
 import numpy as np
 import nvidia_smi
 import pandas as pd
@@ -19,6 +19,57 @@ from torch.utils.data import WeightedRandomSampler
 
 from mt.mymodules.mypath import Mypath as Path
 from mt.mymodules.mypath import PathInit
+
+# class RecordThread(threading.Thread):
+#     def __init__(self, *args, **kargs):
+#         super().__init__(*args, **kargs)
+#         self.
+#
+#     def run(self):
+
+
+def write_record(record_file, current_id, mypath, log_dict, args):
+    """
+    Compared with record_end, this function aims to write the records to excel without "best metrics" and "end time".
+    """
+
+    lock = FileLock(record_file + ".lock")
+    with lock:  # with this lock,  open a file for exclusive access
+        print("record path", os.path.realpath(record_file))
+        df = pd.read_csv(os.path.realpath(record_file), delimiter=',')
+        print('df', df)
+        index = df.index[df['ID'] == current_id].to_list()
+        if len(index) > 1:
+            raise Exception("over 1 row has the same id", id)
+        elif len(index) == 0:  # only one line,
+            index = 0
+        else:
+            index = index[0]
+
+        for key, value in log_dict.items():  # convert numpy to str before writing all self.log_dict to csv file
+            if type(value) in [np.ndarray, list]:
+                str_v = ''
+                for v in value:
+                    str_v += str(v)
+                    str_v += '_'
+                value = str_v
+            df.loc[index, key] = value
+            if type(value) is int:
+                df[key] = df[key].astype('Int64')
+
+        for column in df:
+            if type(df[column].to_list()[-1]) is int:
+                df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
+
+        args_dict = vars(args)
+        args_dict.update({'ID': current_id})
+        for column in df:
+            if column in args_dict.keys() and type(args_dict[column]) is int:
+                df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
+        write_and_backup(df, record_file, mypath)
+        print("Write record successfully for one time!")
+        return None
+
 
 class Tracker():
     def __init__(self, task_name, data_path='data_ori_space', ld_name=None):
@@ -30,9 +81,18 @@ class Tracker():
         self.record_file = PathInit(self.task_name).record_file
         self.ld_name = ld_name
     def record(self, key, values):
+        """
+        record the current log_dict
+        """
         self.log_dict[key] = values
+        # record_thread = RecordThread()
+        mypath = Path(self.current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)
+        record_thread = threading.Thread(target=write_record,
+                                         args=(self.record_file, self.current_id, mypath, self.log_dict, self.args, ))
+        record_thread.start()
 
-    def record_1st(self, args: argparse.Namespace) -> int:
+
+    def record_start(self, args: argparse.Namespace) -> int:
         """First record in this experiment.
 
         Args:
@@ -80,7 +140,7 @@ class Tracker():
                 write_and_backup(df, self.record_file, mypath)
         return new_id
 
-    def record_2nd(self) -> None:
+    def record_end(self) -> None:
         """Second time to save logs.
 
         Args:
@@ -207,18 +267,22 @@ def add_best_metrics(df: pd.DataFrame,
         :func:`ssc_scoring.mymodules.tool.record_2nd`
 
     """
-    modes = ['train', 'valid', 'test']
-
-    metrics_max = 'dice_ex_bg'
-    df.at[index, 'metrics_max'] = metrics_max
+    modes = ['train', 'valid']
 
     for mode in modes:
+        if mode == 'train':
+            metrics_max = 'ave_loss_in_epoch'
+        else:
+            metrics_max = 'dice_ex_bg'
+        df.at[index, 'metrics_max'] = metrics_max
+
         lock2 = FileLock(mypath.metrics_fpath(mode) + ".lock")
         # when evaluating/inference old models, those files would be copied to new the folder
         with lock2:
             try:
                 loss_df = pd.read_csv(mypath.metrics_fpath(mode))
             except FileNotFoundError:  # copy loss files from old directory to here
+                # continue
                 shutil.copy(mypath2.metrics_fpath(mode), mypath.metrics_fpath(mode))
                 try:
                     loss_df = pd.read_csv(mypath.metrics_fpath(mode))
@@ -228,9 +292,9 @@ def add_best_metrics(df: pd.DataFrame,
 
             best_index = loss_df[metrics_max].idxmax()
             if mode == 'train':
-                metrics_ls = ['loss', 'dice_ex_bg', 'dice_inc_bg']
+                metrics_ls = ['ave_loss_in_epoch']
             elif mode == 'valid':
-                metrics_ls = ['loss', 'dice_ex_bg', 'dice_inc_bg']
+                metrics_ls = ['dice_ex_bg', 'dice_inc_bg']
 
             for metric in metrics_ls:
                 df.at[index, mode + '_' + metric] = round( loss_df[metric][best_index], 3)
