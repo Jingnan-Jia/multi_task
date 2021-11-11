@@ -65,7 +65,7 @@ def train_mtnet(args):
             ta.infer()
 
     for net_name, ta in net_ta_dict.items():
-        ta.tracker.record_2nd()  # save records after all tasks finished.
+        ta.tracker.record_end()  # save records after all tasks finished.
     print('finish!')
 
 if __name__ == '__main__':
