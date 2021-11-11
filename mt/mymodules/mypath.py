@@ -164,6 +164,8 @@ class Mypath(PathInit):
             sub_dir = args.sub_dir_aw
         elif self.task == 'recon':
             sub_dir = args.sub_dir_rc
+        elif self.task == 'av':
+            sub_dir = args.sub_dir_av
         else:
             raise Exception("task is not valid: ", self.task)
         return sub_dir
