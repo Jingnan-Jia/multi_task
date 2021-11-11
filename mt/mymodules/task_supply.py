@@ -151,6 +151,8 @@ def mt_netname_label(net_names: List[str]) -> Dict[str, List[int]]:
             label = [1]
         elif "net_lobe" in net_name:
             label = [0, 1, 2, 3, 4, 5]
+        elif "net_av" in net_name:
+            label = [0, 1, 2]
         else:
             label = [0, 1]
         netname_label_dict[net_name] = label
@@ -179,6 +181,8 @@ def mt_netname_ds(net_names: List[str]) -> Dict[str, int]:
             ds = args.ds_aw
         elif net_name == "net_lung":
             ds = args.ds_lu
+        elif net_name == "net_av":
+            ds = args.ds_av
         else:
             print(f"net {net_name} can not accept ds, so ds = 0")
             ds = 0
@@ -282,6 +286,20 @@ def _mt_netname_ta(netname_label_dict: Dict[str, List],
                 main_net_name=args.main_net_name,
                 all_nets=all_nets,
                 sub_dir=args.sub_dir_aw
+            )
+        elif "net_av" in net_name:
+            ta = TaskArgs(
+                task="av",
+                labels=label,
+                net_name=net_name,
+                ld_name=args.ld_av,
+                tr_nb=args.tr_nb_av,
+                ds=args.ds_av,
+                tsp=args.tsp_av,
+                lr=args.lr_av,
+                main_net_name=args.main_net_name,
+                all_nets=all_nets,
+                sub_dir=args.sub_dir_av
             )
         else:
             raise Exception(f"net name {net_name} is not correct")
