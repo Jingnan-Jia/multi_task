@@ -355,7 +355,7 @@ def train(data_folder="."):
         inferer=get_inferer(),
         post_transform=val_post_transform,
         key_val_metric={
-            "val_mean_dice": MeanDice(include_background=False, output_transform=lambda x: (x["pred"], x["label"]))
+            "dice_ex_bg": MeanDice(include_background=False, output_transform=lambda x: (x["pred"], x["label"]))
         },
         val_handlers=val_handlers,
         amp=amp,
