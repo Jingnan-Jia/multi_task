@@ -11,7 +11,8 @@ import shutil
 import time
 from shutil import copy2
 from typing import List, Optional, Union, Dict, Tuple
-
+import seg_metrics.seg_metrics as sg
+import pathlib
 import monai
 import numpy as np
 import torch
@@ -277,6 +278,7 @@ class WeightedCELoss(nn.Module):
 
             return ce_fn + ce_fp
 
+
 class DiceCELoss(nn.Module):
     """Dice and Xentropy loss"""
 
@@ -293,6 +295,7 @@ class DiceCELoss(nn.Module):
         print(f"dice loss: {dice}, CE loss: {cross_entropy}")
         return dice + cross_entropy
 
+
 class CELoss(nn.Module):
     def __init__(self):
         super().__init__()
@@ -303,8 +306,6 @@ class CELoss(nn.Module):
         # Target from pipeline has shape (B, 1, D, H, W)
         cross_entropy = self.cross_entropy(y_pred, torch.squeeze(y_true, dim=1).long())
         return cross_entropy
-
-
 
 
 def get_loss(task: str) -> nn.Module:
@@ -393,6 +394,7 @@ def get_inferer():
     )
     return inferer
 
+
 class TaskArgs:
     """A container. The network's necessary parameters, datasets, training steps are in this container.
 
@@ -436,7 +438,7 @@ class TaskArgs:
         self.keys: Tuple[str, str] = ("pred", "label")
 
         self.tracker = Tracker(task_name=self.task, data_path=args.data_path, ld_name=ld_name)  # record super parameters and metrics
-        self.id = self.tracker.record_1st(args)  # first record, get the id, then have the path.
+        self.id = self.tracker.record_start(args)  # first record, get the id, then have the path.
         self.mypath = Mypath(self.id, task, data_path=args.data_path, check_id_dir=False)
         self.ld_name = ld_name  # for fine-tuning and inference
         self.ld_path = Mypath(self.ld_name, task, data_path=args.data_path, check_id_dir=False)
@@ -448,25 +450,28 @@ class TaskArgs:
 
         self.n_classes = len(self.labels)
 
-        # if args.mode=="train":
-        self.tra_loader, self.val_loader = self._dataloader()
-        if args.fluent_ds:
-            self.tra_loader2 = self._dataloader(require_val=False) # do not second need val data
-            self.tra_gen = inifite_generator(self.tra_loader, self.tra_loader2)
-        else:
-            self.tra_gen = inifite_generator(self.tra_loader)
+        if args.mode=="train":  # if in ínfer mode, do not need to load tra_loader or val_loader at all.
+            self.tra_loader, self.val_loader = self._dataloader()
+            if args.fluent_ds:
+                self.tra_loader2 = self._dataloader(require_val=False) # do not second need val data
+                self.tra_gen = inifite_generator(self.tra_loader, self.tra_loader2)
+            else:
+                self.tra_gen = inifite_generator(self.tra_loader)
 
-        self.loss_fun = get_loss(task)
-        self.opt = torch.optim.Adam(self.net.parameters(), lr=self.lr)
+            self.evaluator = self._get_evaluator()
 
-        # self.main_net_enc_grad = [layer.grad for layer in self.net.enc]
-        # self.main_net_enc_grad_norm = [torch.norm(grad) for grad in self.main_net_enc_grad]
-        self.criteria = self.loss_fun
-        self.accumulate_loss: float = 0.0
-        self.current_loss: float = 100.0
-        self.steps_per_epoch = self.n_train * args.pps
+            self.loss_fun = get_loss(task)
+            self.opt = torch.optim.Adam(self.net.parameters(), lr=self.lr)
 
-        self.evaluator = self._get_evaluator()
+            # self.main_net_enc_grad = [layer.grad for layer in self.net.enc]
+            # self.main_net_enc_grad_norm = [torch.norm(grad) for grad in self.main_net_enc_grad]
+            self.criteria = self.loss_fun
+            self.accumulate_loss: float = 0.0
+            self.current_loss: float = 100.0
+            self.steps_per_epoch = self.n_train * args.pps
+            self.tracker.record('steps_per_epoch', self.steps_per_epoch)
+
+
         if args.mode == "infer":
             self.infer_loader = self.get_infer_loader(transformmode="infer")
         elif "yichao" in self.net_name:
@@ -605,25 +610,56 @@ class TaskArgs:
             gdth_names: List[str] = get_all_ct_names(data_dir, name_suffix="_seg")
         else:
             gdth_names = ct_names
-        train_frac, val_frac = 0.8, 0.2
+        if self.main_net_name!='lobe': # pat_28 should be in testing dataset.
+            SEED = 47
+            random.seed(SEED)
+            random.shuffle(ct_names)
+            random.seed(SEED)
+            random.shuffle(gdth_names)
+
+        train_frac, val_frac, test_frac = 0.7, 0.1, 0.2
+        data_len = len(gdth_names)
+        tr_nb = int(train_frac * data_len)
+        vd_nb = int(val_frac * data_len)
+        ts_nb = int(test_frac * data_len)
+        rest = data_len - tr_nb - vd_nb - ts_nb
+        ts_nb += rest  # assign the rest patients to testing dataset
+        if vd_nb==0:
+            vd_nb = 1
+            tr_nb -= 1
+        if ts_nb == 0:
+            ts_nb = 1
+            tr_nb -= 1
+        if tr_nb==0:
+            raise Exception(f"training number is 0 !")
+
         if self.tr_nb != 0:
-            total_nb = min(self.tr_nb, len(ct_names))  # if set tr_nb
+        #     total_nb = min(self.tr_nb, tr_nb)  # if set tr_nb
+        # else:
+        #     total_nb = len(ct_names)
+            self.n_train: int = min(tr_nb, self.tr_nb)
         else:
-            total_nb = len(ct_names)
-        self.n_train: int = max(int(train_frac * total_nb), 1)  # avoid empty train data
+            self.n_train: int = tr_nb
 
         if self.net_name != self.main_net_name:
-            self.n_val: int = 5
+            self.n_val: int = min(5, vd_nb)
         else:
             # self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
-            self.n_val: int = total_nb - self.n_train
-        self.n_train, self.n_val = 2, 2 # todo: change it.
+            self.n_val: int = vd_nb
+        # self.n_train, self.n_val = 2, 2 # todo: change it.
 
-        logging.info(f"In task {self.task}, training: train {self.n_train} val {self.n_val}")
+        logging.info(f"In task {self.task}, training number:  {self.n_train} valid number: {self.n_val}")
 
         train_files = [{keys[0]: img, keys[1]: seg} for img, seg in
                        zip(ct_names[:self.n_train], gdth_names[:self.n_train])]
-        val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(ct_names[-self.n_val:], gdth_names[-self.n_val:])]
+        val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(ct_names[self.n_train: self.n_train+self.n_val],
+                                                                      gdth_names[self.n_train: self.n_train+self.n_val])]
+        ts_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(ct_names[-ts_nb:], gdth_names[-ts_nb:])]
+        print(f"In task {self.task}")
+        print(f"train_files: {train_files}")
+        print(f"valid_files: {val_files}")
+        print(f"test_files: {ts_files}")
+
         return train_files, val_files
 
     def _dataloader(self, require_val=True):
@@ -729,8 +765,9 @@ class TaskArgs:
             if os.path.exists(val_log_dir):
                 val_log = np.genfromtxt(val_log_dir, dtype='str', delimiter=',')
             else:
-                val_log = ['epoch', 'dice_ex_bg', 'dice_inc_bg']
+                val_log = ['epoch', 'step', 'dice_ex_bg', 'dice_inc_bg']
             val_log = np.vstack([val_log, [engine.state.epoch,
+                                           self.current_step,
                                            round(engine.state.metrics["dice_ex_bg"], 3),
                                            round(engine.state.metrics["dice_inc_bg"], 3),]])
             np.savetxt(val_log_dir, val_log, fmt='%s', delimiter=',')
@@ -832,7 +869,7 @@ class TaskArgs:
 
         # for
         t2 = time.time()
-        print(f"load data cost time {t3 - t1}, one step backward training cost time: {t2 - t8}")
+        print(f"load data cost time {int(t3 - t1)}, one step backward training cost time: {t2 - t8}")
         if (args.ad_lr!=0) and self.main_net_name != self.net_name:  # reset lr for aux nets
             lr = net_ta_dict[self.main_net_name].current_loss / self.current_loss * self.lr * args.ad_lr
             self.opt = torch.optim.Adam(self.net.parameters(), lr=lr)
@@ -897,6 +934,7 @@ class TaskArgs:
         else:
             valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
         # print(f"vallid period: {valid_period}")
+        print('idx_', idx_)
         if idx_ % valid_period == (valid_period-1):
             print("start do validation")
             if "net_recon" not in self.net_name:
@@ -907,9 +945,13 @@ class TaskArgs:
 
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
-        images = sorted(glob.glob(os.path.join(data_folder, "*_ct*")))
-        logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
-        infer_files = [{"image": img} for img in images]
+        if data_folder in ['None', None]:
+            train_files, infer_files = self._get_file_names()
+            print('infered files:', infer_files)
+        else:
+            images = sorted(glob.glob(os.path.join(data_folder, "*_ct*")))
+            logging.info(f"infer: image ({len(images)}) folder: {data_folder}")
+            infer_files = [{"image": img} for img in images]
 
         keys = ("image",)
         infer_transforms = self._get_xforms(transformmode, keys)
@@ -932,7 +974,10 @@ class TaskArgs:
         print("start infer")
         keys = ("image",)
         self.net.eval()
-        prediction_folder = self.ld_path.infer_pred_dir() + "/" + args.infer_data_dir.split("/")[-1]
+        if args.infer_data_dir is None:  # prediction may be GLUCOLD or LUNA16 or LOLA11
+            prediction_folder = os.path.join(self.ld_path.infer_pred_dir(), self.ld_path.data_sub_dir())
+        else:
+            prediction_folder = os.path.join(self.ld_path.infer_pred_dir(), args.infer_data_dir.split("/")[-1])
         print(prediction_folder)
         inferer = get_inferer()
         saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
@@ -941,20 +986,23 @@ class TaskArgs:
                 logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
                 print(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
                 preds = inferer(infer_data[keys[0]].to(self.device), self.net)
-                n = 1.0
-                for _ in range(4):
-                    # test time augmentations
-                    _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
-                    pred = inferer(_img.to(self.device), self.net)
-                    preds = preds + pred
-                    n = n + 1.0
-                    if 'lesion' in self.task:
-                        for dims in [[2], [3]]:
-                            flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
-                            pred = torch.flip(flip_pred, dims=dims)
-                            preds = preds + pred
-                            n = n + 1.0
-                preds = preds / n
+                if args.infer_4_times:
+                    n = 1.0
+                    for _ in range(4):
+                        # test time augmentations
+                        _img = RandGaussianNoised(keys[0], prob=1.0, std=0.01)(infer_data)[keys[0]]
+                        pred = inferer(_img.to(self.device), self.net)
+                        preds = preds + pred
+                        n = n + 1.0
+                        if 'lesion' in self.task:
+                            for dims in [[2], [3]]:
+                                flip_pred = inferer(torch.flip(_img.to(self.device), dims=dims), self.net)
+                                pred = torch.flip(flip_pred, dims=dims)
+                                preds = preds + pred
+                                n = n + 1.0
+                    preds = preds / n
+                else:
+                    preds = inferer(infer_data[keys[0]].to(self.device), self.net)
                 if write_pbb_maps:
                     # pass
                     filename = infer_data["image_meta_dict"]["filename_or_obj"][0]
@@ -967,9 +1015,8 @@ class TaskArgs:
                 saver.save_batch(preds, infer_data["image_meta_dict"])
 
         # copy the saved segmentations into the required folder structure for submission
-        submission_dir = os.path.join(prediction_folder, "to_submit")
-        if not os.path.exists(submission_dir):
-            os.makedirs(submission_dir)
+        if not os.path.exists(prediction_folder):
+            os.makedirs(prediction_folder)
         # files = glob.glob(os.path.join(prediction_folder,"*", "*.nii.gz"))
         files = get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct_seg")
 
@@ -978,21 +1025,25 @@ class TaskArgs:
             new_name = new_name.split("_ct")[0] + new_name.split("_ct")[1]
             # new_name = new_name[len("volume-covid19-A-0"):]
             # new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
-            to_name = os.path.join(submission_dir, new_name )
-            shutil.copy(f, to_name)
+            to_name = os.path.join(prediction_folder, new_name )
+            shutil.move(f, to_name)
+            parent_dir = pathlib.Path(f).parent.absolute()  # remove the empty directory after move its file
+            if len(os.listdir(parent_dir)) == 0:
+                # removing the file using the os.remove() method
+                os.rmdir(parent_dir)
 
-        logging.info(f"predictions copied to {submission_dir}.")
-
+        logging.info(f"predictions copied to {prediction_folder}.")
 
         # if "lobe" in self.net_name:  # other tasks do not have lobe ground truth
-        #     gdth_file = self.mypath.data_dir() + '/valid'
-        #     pred_file = self.mypath.task_model_dir(self.ld_name) + '/infer_pred/valid/to_submit'
-        #     csv_file = self.mypath.task_model_dir(self.ld_name) + '/' + self.ld_name + '_metrics' + '.csv'
+        #     gdth_file = self.mypath.data_task_dir
+        #     pred_file = prediction_folder
+        #     csv_file = os.path.join(prediction_folder, 'metrics.csv')
         #
         #     metrics = sg.write_metrics(labels=self.labels[1:],  # exclude background
         #                                gdth_path=gdth_file,
         #                                pred_path=pred_file,
         #                                csv_file=csv_file)
+        #     print('metrics: ', metrics)
 
         # if "lung" in self.net_name:
         #
