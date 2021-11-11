@@ -29,7 +29,8 @@ from monai.data.utils import create_file_basename
 
 import monai
 # from monai.handlers import CheckpointSaver, MeanDice, StatsHandler, ValidationHandler
-from monai.handlers import StatsHandler, MeanDice, ValidationHandler, CheckpointSaver
+from monai.handlers import StatsHandler, MeanDice, ValidationHandler
+from CheckpointSaver import CheckpointSaver
 from monai.transforms import (
     AddChanneld,
     AsDiscreted,
@@ -52,6 +53,22 @@ train_workers = 10
 
 # Writer will output to ./runs/ directory by default
 # writer = SummaryWriter(args.model_folder)
+
+
+
+
+
+def inifite_generator(dataloader):
+    keys = ("image", "label")
+    while True:
+        for data in dataloader:
+            x = data[keys[0]]
+            y = data[keys[1]]
+            print('x.shape', x.shape)
+            print('y.shape', y.shape)
+            print("x.sum", torch.sum(x))
+            print("y.sum", torch.sum(y))
+            yield x, y
 
 def get_xforms(mode="train", keys=("image", "label")):
     """returns a composed transform for train/val/infer."""
@@ -247,7 +264,7 @@ def dataloader(task):
     # create a training data loader
     logging.info(f"batch size {args.batch_size}")
     train_transforms = get_xforms("train", keys)
-    train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms)
+    train_ds = monai.data.CacheDataset(data=train_files, transform=train_transforms, num_workers=4)
     train_loader = monai.data.DataLoader(
         train_ds,
         batch_size=args.batch_size,
@@ -270,6 +287,14 @@ def dataloader(task):
 
 def train(data_folder="."):
     """run a training pipeline."""
+    # create BasicUNet, DiceLoss and Adam optimizer
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    net = get_net().to(device)
+    print(net)
+    if args.ld_model:
+        ckpt = get_model_path(args.ld_model)
+        net.load_state_dict(torch.load(ckpt, map_location=device))
+        logging.info("successfully load model: " + ckpt)
 
     images = sorted(glob.glob(os.path.join(data_folder, "*_ct.nii.gz")))
     labels = sorted(glob.glob(os.path.join(data_folder, "*_seg.nii.gz")))
@@ -305,7 +330,6 @@ def train(data_folder="."):
     images_train = sorted(list(set(images) - set(images_valid)))
     labels_train = sorted(list(set(labels) - set(labels_valid)))
 
-
     train_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(images_train, labels_train)]
     val_files = [{keys[0]: img, keys[1]: seg} for img, seg in zip(images_valid, labels_valid)]
 
@@ -331,13 +355,7 @@ def train(data_folder="."):
         pin_memory=torch.cuda.is_available(),
     )
 
-    # create BasicUNet, DiceLoss and Adam optimizer
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    net = get_net().to(device)
-    if args.ld_model:
-        ckpt = get_model_path(args.ld_model)
-        net.load_state_dict(torch.load(ckpt, map_location=device))
-        logging.info("successfully load model: " + ckpt)
+
 
     # create evaluator (to be used to measure model quality during training
     val_post_transform = monai.transforms.Compose(
@@ -355,40 +373,73 @@ def train(data_folder="."):
         inferer=get_inferer(),
         post_transform=val_post_transform,
         key_val_metric={
-            "dice_ex_bg": MeanDice(include_background=False, output_transform=lambda x: (x["pred"], x["label"]))
+            "val_mean_dice": MeanDice(include_background=False, output_transform=lambda x: (x["pred"], x["label"]))
         },
         val_handlers=val_handlers,
         amp=amp,
     )
 
-    # evaluator as an event handler of the trainer
-    epochs = [int(args.epochs * 0.8), int(args.epochs * 0.2)]
-    intervals = [10, 1]
-    lrs = [1e-3, 1e-4]
-    momentum = 0.95
-    for epoch, interval, lr in zip(epochs, intervals, lrs):  # big interval to save time, then small interval refine
-        logging.info(f"epochs {epoch}, lr {lr}, momentum {momentum}, interval {interval}")
-        opt = torch.optim.Adam(net.parameters(), lr=lr)
-        train_handlers = [
-            ValidationHandler(validator=evaluator, interval=interval, epoch_level=True),
-            StatsHandler(tag_name="train_loss", output_transform=lambda x: x["loss"]),
-        ]
-        trainer = monai.engines.SupervisedTrainer(
-            device=device,
-            max_epochs=epoch,
-            train_data_loader=train_loader,
-            network=net,
-            optimizer=opt,
-            loss_function=DiceCELoss(),
-            inferer=get_inferer(),
-            key_train_metric=None,
-            train_handlers=train_handlers,
-            amp=amp
-        )
+    tra_gen = inifite_generator(train_loader)
+    criteria = DiceCELoss()
+    opt = torch.optim.Adam(net.parameters(), lr=1e-4)
+    net.train()
+    inferer = get_inferer()
+    for i in range(100000):
+        print("step: ", i)
+        x, y = next(tra_gen)
+        
+        x = x.to(device)
+        y = y.to(device)
+        # with torch.cuda.amp.autocast():
+        pred = net(x)
+        loss = criteria(pred, y)
+        # print("==========================================")
+        # for name, param in net.named_parameters():
+        #     print(name, param.data)
+        #     print(name + "_grad", param.grad)
+        #     print(name + "_grad_flag", param.requires_grad)
+        # print("==========================================")
+        opt.zero_grad()
+        # current_loss = loss.item()
+        # print("current loss", current_loss)
+        loss.backward()
+        opt.step()
+        if i % 510 == 509:
+            evaluator.run()
+        # for name, param in net.named_parameters():
+        #     print(name, param.data)
+        #     print(name + "_grad", param.grad)
+        #     print(name + "_sum_square", torch.sum(param.grad ** 2))
+        #     print(name + "_grad_flag", param.requires_grad)
 
-        # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
-
-        trainer.run()
+    # # evaluator as an event handler of the trainer
+    # epochs = [int(args.epochs * 0.8), int(args.epochs * 0.2)]
+    # intervals = [10, 1]
+    # lrs = [1e-3, 1e-4]
+    # momentum = 0.95
+    # for epoch, interval, lr in zip(epochs, intervals, lrs):  # big interval to save time, then small interval refine
+    #     logging.info(f"epochs {epoch}, lr {lr}, momentum {momentum}, interval {interval}")
+    #     opt = torch.optim.Adam(net.parameters(), lr=lr)
+    #     train_handlers = [
+    #         ValidationHandler(validator=evaluator, interval=interval, epoch_level=True),
+    #         StatsHandler(tag_name="train_loss", output_transform=lambda x: x["loss"]),
+    #     ]
+    #     trainer = monai.engines.SupervisedTrainer(
+    #         device=device,
+    #         max_epochs=epoch,
+    #         train_data_loader=train_loader,
+    #         network=net,
+    #         optimizer=opt,
+    #         loss_function=DiceCELoss(),
+    #         inferer=get_inferer(),
+    #         key_train_metric=None,
+    #         train_handlers=train_handlers,
+    #         amp=amp
+    #     )
+    #
+    #     # trainer.add_event_handler(Events.ITERATION_COMPLETED, logfile)
+    #
+    #     trainer.run()
 
 
 def infer(data_folder=".", prediction_folder=args.result_folder, write_pbb_maps=False):
@@ -480,7 +531,6 @@ if __name__ == "__main__":
         python run_net.py train --data_folder "COVID-19-20_v2/Train" # run the training pipeline
         python run_net.py infer --data_folder "COVID-19-20_v2/Validation" # run the inference pipeline
     """
-
 
     if args.mode == "train":
         save_args()

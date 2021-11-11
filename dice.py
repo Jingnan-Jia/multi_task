@@ -7,10 +7,12 @@ import seg_metrics.seg_metrics as sg
 
 
 labels = [0, 1, 2, 3, 4, 5]
+ex_id = '1631188707_500'
 
-gdth_file = '/data/jjia/monai/models/lobe/1610983656_838/infer_pred/lobe/to_submit'
-pred_file = '/data/jjia/monai/data_ori_space/lobe/valid'
-csv_file = 'lobe_metrics_all.csv'
+pred_file = '/data/jjia/multi_task/mt/scripts/results/lobe/'+ ex_id + '/infer_pred/valid/to_submit'
+
+gdth_file = '/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/valid'
+csv_file = '/data/jjia/multi_task/mt/scripts/results/lobe/'+ ex_id + '/infer_pred/valid/lobe_metrics_all.csv'
 
 metrics = sg.write_metrics(labels=labels[:],  # exclude background
                   gdth_path=gdth_file,
