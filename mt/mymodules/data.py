@@ -79,7 +79,7 @@ class FluentDataloader():
                 #     continue
                 # else:
 
-                data = q.get(timeout=100)
+                data = q.get(timeout=1000)
                 # print('get data successfully')
                 yield data
 
