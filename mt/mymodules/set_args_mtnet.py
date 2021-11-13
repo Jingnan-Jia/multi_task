@@ -27,6 +27,9 @@ def get_args() -> argparse.Namespace:
                                                                  'weighted_CE_fnfp', 'weighted_CE_fn'),
                         type=str, default='dice_CE')  # balanced_dice, balanced_ce
 
+    parser.add_argument('--io', help='input and output', type=str,
+                        choices=('1_in_hgh_1_out_hgh', '1_in_low_1_out_low', '2_in_1_out_hgh','2_in_1_out_low'),
+                        default='1_in_hgh_1_out_hgh')
     parser.add_argument('--pps', help='patches_per_scan', type=int, default=10)
     parser.add_argument('--amp', help='amp', type=bool, default=True)
     parser.add_argument('--batch_size', help='batch_size', type=int, default=2)

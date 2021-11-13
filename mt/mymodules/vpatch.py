@@ -159,10 +159,58 @@ def random_patch(a_low, a_hgh, b_low, b_hgh, patch_shape=(128, 128, 64),
 
 
 
+class MultiScaled(MapTransform):
+    def __init__(self,
+                 image_key: str,
+                 label_key: str,
+                 io: str,
+                 tsp_xy: float,
+                 tsp_z: float
+                 ):
+        self.image_key = image_key
+        self.label_key = label_key
+
+        self.io = io
+        self.tsp_xy = tsp_xy
+        self.tsp_z = tsp_z
+        self.spacing_image = Spacing(pixdim=(self.tsp_xy, self.tsp_xy, self.tsp_z), mode="bilinear")
+        self.spacing_gdth = Spacing(pixdim=(self.tsp_xy, self.tsp_xy, self.tsp_z), mode="nearest")
 
 
+    def __call__(self, data):
+        """
+                a_hgh and b_hgh must exist. but:
+                if trgt_sp are None and not self.mtscale, a_low, b_low would be None
+                :param idx: index of ct scan
+                :return: a_low, a_hgh, b_low, b_hgh,
+                """
+        d = dict(data)
 
-class RandCropMultiScaled(MapTransform):
+        if (self.io != "1_in_hgh_1_out_hgh") and not any(self.tspzyx):
+            # low resolution require target space zyx or target size zyx
+            raise Exception("io is: " + str(self.io) + " but did not set trgt_space_list or trgt_sz_list")
+
+        image_low, image_hgh, gdth_low, gdth_hgh = None, None, None, None
+        if "in_low" in self.io or "2_in" in self.io:
+            image_low = self.spacing_image(d[self.image_key])
+        if "out_low" in self.io or "2_out" in self.io:
+            gdth_low = self.spacing_gdth(d[self.label_key])
+
+        if "in_hgh" in self.io or "2_in" in self.io:
+            image_hgh = d[self.image_key]  # shape: (z,y,x,chn)
+        if "out_hgh" in self.io or "2_out" in self.io:
+            gdth_hgh = d[self.label_key]  # shape: (z,y,x,chn)
+
+        d['image_low_patch'] = image_low
+        d['image_hgh_patch'] = image_hgh
+
+        d['gdth_low_patch'] = gdth_low
+        d['gdth_hgh_patch'] = gdth_hgh
+
+        return d
+
+
+class RandMultiScaleCropd(MapTransform):
     """
     The shape of data['image_key'] should be (chn, x, y, z, ...).
     So this transform must be after "addchannel'.
@@ -174,55 +222,27 @@ class RandCropMultiScaled(MapTransform):
 
     """
     def __init__(self,
-                 image_key: str,
-                 label_key: str,
                  io: str,
                  p_middle: float,
-                 tsp_xy: float,
-                 tsp_z: float):
+                 task: str,
+                 ptch_sz,
+    ptch_z_sz):
         """
         The keys must be ('image_key', 'label_key')!
         """
-        self.image_key = image_key
-        self.label_key = label_key
-
+        self.task = task
         self.io = io
         self.p_middle = p_middle
-        self.tsp_xy = tsp_xy
-        self.tsp_z = tsp_z
-        self.spacing_image = Spacing(pixdim=(self.tsp_xy, self.tsp_xy, self.tsp_z), mode="bilinear")
-        self.spacing_gdth = Spacing(pixdim=(self.tsp_xy, self.tsp_xy, self.tsp_z), mode="nearest")
 
-    def multi_scale_imgs(self, d):
-        """
-        a_hgh and b_hgh must exist. but:
-        if trgt_sz and trgt_sp are None and not self.mtscale, a_low, b_low, c_low would be None
-        if not self.aux, c_low, c_hgh would be None
-        :param idx: index of ct scan
-        :return: a_low, a_hgh, b_low, b_hgh, c_low, c_hgh
-        """
+        self.ptch_sz = ptch_sz
+        self.ptch_z_sz = ptch_z_sz
 
-        if (self.io != "1_in_hgh_1_out_hgh") and not any(self.tspzyx):
-            # low resolution require target space zyx or target size zyx
-            raise Exception("io is: " + str(self.io) + " but did not set trgt_space_list or trgt_sz_list")
 
-        image_low, image_hgh, gdth_low, gdth_hgh = None, None, None, None
-        if "in_low" in self.io or "2_in" in self.io:
-            image_low = self.spacing_image(d[self.image_key])
-        if "out_low" in self.io or "2_out" in self.io:
-            bgdth_low = self.spacing_gdth(d[self.label_key])
-
-        if "in_hgh" in self.io or "2_in" in self.io:
-            image_hgh = d[self.image_key]  # shape: (z,y,x,chn)
-        if "out_hgh" in self.io or "2_out" in self.io:
-            gdth_hgh = d[self.label_key]  # shape: (z,y,x,chn)
-
-        return image_low, image_hgh, gdth_low, gdth_hgh  # shape (z,y,x,chn)
 
     def __call__(self, data):
         d = dict(data)
 
-        a_low, a_hgh, b_low, b_hgh = self.multi_scale_imgs(d)
+        a_low, a_hgh, b_low, b_hgh = d['image_low_patch'],d['image_hgh_patch'] ,d['gdth_low_patch'] ,d['gdth_hgh_patch']
 
         a_low_patch, b_low_patch, a_hgh_patch, b_hgh_patch = random_patch(a_low, a_hgh, b_low, b_hgh,
                                     patch_shape=(self.ptch_sz, self.ptch_sz, self.ptch_z_sz),
