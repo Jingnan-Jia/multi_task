@@ -120,7 +120,7 @@ def gntFissure(Absdir, radiusValue=3, workers=10, number=None, labels=None):
             if ct_fpath is not None:
                 t1 = time.time()
                 print(threading.current_thread().name + "is computing fissure") # lola11-49_ct.nii.gz
-                fissureFpath = Absdir + '/' + ct_fpath.split('/')[-1].split('_ct')[0] + "_fissure_"+ \
+                fissureFpath = Absdir + '/' + ct_fpath.split('/')[-1].split('_seg')[0] + "_fissure_"+ \
                                str(radiusValue) + '_seg.nii.gz'
                 writeFissure(ct_fpath, fissureFpath, radiusValue, labels)
                 t3 = time.time()
