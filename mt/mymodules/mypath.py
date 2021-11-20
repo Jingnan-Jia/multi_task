@@ -38,8 +38,8 @@ def mkdir_dcrt(fun):  # decorator to create directory if not exist
 class PathInit():
     def __init__(self, task):
 
-        self.data_dir = 'data'
-        self.results_dir = 'results'
+        self.data_dir = os.path.abspath('data')
+        self.results_dir = os.path.abspath('results')
 
         self.task = task
         self.task_dir = os.path.join(self.results_dir, self.task)
