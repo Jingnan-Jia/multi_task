@@ -57,15 +57,15 @@ def write_record(record_file, current_id, mypath, log_dict, args):
             if type(value) is int:
                 df[key] = df[key].astype('Int64')
 
-        for column in df:
-            if type(df[column].to_list()[-1]) is int:
-                df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
+        # for column in df:
+        #     if type(df[column].to_list()[-1]) is int:
+        #         df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
 
         args_dict = vars(args)
         args_dict.update({'ID': current_id})
-        for column in df:
-            if column in args_dict.keys() and type(args_dict[column]) is int:
-                df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
+        # for column in df:
+        #     if column in args_dict.keys() and type(args_dict[column]) is int:
+        #         df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
         write_and_backup(df, record_file, mypath)
         print("Write record successfully for one time!")
         return None
@@ -129,6 +129,11 @@ class Tracker():
                 else:
                     index = df.index.to_list()[-1]  # last index
                     for key, value in idatime.items():  # write new line
+                        if type(value) is int:  # convert thoes values which should be int to int.
+                            try:
+                                df[key] = df[key].astype('Int64')
+                            except KeyError:  # this key is not in the df
+                                pass
                         try:
                             df.at[index + 1, key] = value  #
                         except:
@@ -178,7 +183,7 @@ class Tracker():
 
             mypath = Path(self.current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
             mypath2 = Path(self.ld_name, task=self.task_name, data_path=self.data_path, check_id_dir=False)  # evaluate old model
-
+            # if self.task_name!='recon':
             df = add_best_metrics(df, mypath, mypath2, index)
 
             for key, value in self.log_dict.items():  # convert numpy to str before writing all self.log_dict to csv file
@@ -189,7 +194,7 @@ class Tracker():
                         str_v += '_'
                     value = str_v
                 df.loc[index, key] = value
-                if type(value) is int:
+                if type(value) is int:  # this line may introduce runtime error.
                     df[key] = df[key].astype('Int64')
 
             for column in df:
@@ -371,7 +376,7 @@ def correct_type(df: pd.DataFrame) -> pd.DataFrame:
         """
     for column in df:
         ori_type = type(df[column].to_list()[-1])  # find the type of the last valuable in this column
-        if ori_type is int:
+        if ori_type is int:  # may introduce runtime error
             df[column] = df[column].astype('Int64')  # correct type
     return df
 
