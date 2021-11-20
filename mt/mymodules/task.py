@@ -16,14 +16,16 @@ import pathlib
 import monai
 import numpy as np
 import torch
-import jjnutils.util as cu
+# import jjnutils.util as cu
 from ignite.contrib.handlers import ProgressBar
 from monai.data import NibabelReader, ITKReader, Dataset
 from monai.handlers import CheckpointSaver, MeanDice, ValidationHandler, StatsHandler
 from monai.transforms import LoadImaged, AddChanneld, Orientationd, Spacingd, ScaleIntensityRanged, SpatialPadd, \
-    RandAffined, RandCropByPosNegLabeld, RandGaussianNoised, RandSpatialCropd, CastToTyped, ToTensord, AsDiscreted
+    RandAffined, RandCropByPosNegLabeld, RandGaussianNoised, RandSpatialCropd, CastToTyped, ToTensord, AsDiscreted, Resize
 from torch import nn as nn
 from mt.mymodules.tool import Tracker
+from medutils.medutils import get_all_ct_names, load_itk, save_itk
+from mt.mymodules.largest_connected_parts import write_connected_lobes
 
 from mt.mymodules.mypath import Mypath
 from mt.mymodules.set_args_mtnet import get_args
@@ -36,43 +38,6 @@ import warnings
 from monai.networks import one_hot
 
 args = get_args()
-
-
-def get_all_ct_names(path, number=None, prefix=None, name_suffix=None):
-    print(f'data path: {os.path.abspath(path)  }')
-    suffix_list = [".nrrd", ".mhd", ".mha", ".nii", ".nii.gz"]  # todo: more suffix
-
-    if prefix and name_suffix:
-        files = glob.glob(path + '/' + prefix + "*" + name_suffix + suffix_list[0])
-        for suffix in suffix_list[1:]:
-            files.extend(glob.glob(path + '/' + prefix + "*" + name_suffix + suffix))
-    elif prefix:
-        files = glob.glob(path + '/' + prefix + "*" + suffix_list[0])
-        for suffix in suffix_list[1:]:
-            files.extend(glob.glob(path + '/' + prefix + "*" + suffix))
-    elif name_suffix:
-        if 'SSc' in path:
-            files = glob.glob(path + '/*/' + "*" + name_suffix + '.mha')
-        else:
-            files = glob.glob(path + '/' + "*" + name_suffix + suffix_list[0])
-            for suffix in suffix_list[1:]:
-                files.extend(glob.glob(path + '/' + "*" + name_suffix + suffix))
-
-    else:
-        files = glob.glob(path + '/*' + suffix_list[0])
-        for suffix in suffix_list[1:]:
-            files.extend(glob.glob(path + '/*' + suffix))
-
-    scan_files = sorted(files)
-    if len(scan_files) == 0:
-        raise Exception(f'Scan files are None, please check the data directory: {path}')
-    if isinstance(number, int) and number!=0:
-        scan_files = scan_files[:number]
-    elif isinstance(number, list):  # number = [3,7]
-        scan_files = scan_files[number[0]:number[1]]
-
-    return scan_files
-
 
 class WeightedDiceLoss(_Loss):
     """Weighted Dice for multi-class segmentation. Small objects would be bigger weights.
@@ -383,7 +348,8 @@ def get_inferer():
     """returns a sliding window inference instance."""
 
     patch_size = (args.patch_xy, args.patch_xy, args.patch_z)
-    sw_batch_size, overlap = args.batch_size, 0.5  # todo: change overlap for inferer
+    sw_batch_size = args.batch_size
+    overlap = 0.5 if args.mode=='infer' else 0.8   # todo: change overlap for inferer
     inferer = monai.inferers.SlidingWindowInferer(
         roi_size=patch_size,
         sw_batch_size=sw_batch_size,
@@ -597,25 +563,25 @@ class TaskArgs:
         else:
             self.opt.step()
 
-    def _get_file_names(self):
+    def _get_file_names(self, return_mode=('train', 'valid')):
         """Return 2 lists of training and validation file names."""
         keys = ("image", "label")
         data_dir = self.mypath.data_task_dir
         # data_dir = "/data/jjia/monai/COVID-19-20_v2/Train"
         print(f'data dir: {data_dir}')
 
-        ct_names: List[str] = get_all_ct_names(data_dir, name_suffix="_ct")
+        ct_names: List[str] = get_all_ct_names(data_dir, suffix="_ct")
 
         if self.task != "recon":
-            gdth_names: List[str] = get_all_ct_names(data_dir, name_suffix="_seg")
+            gdth_names: List[str] = get_all_ct_names(data_dir, suffix="_seg")
         else:
             gdth_names = ct_names
-        if self.main_net_name!='lobe': # pat_28 should be in testing dataset.
-            SEED = 47
-            random.seed(SEED)
-            random.shuffle(ct_names)
-            random.seed(SEED)
-            random.shuffle(gdth_names)
+        # if self.main_net_name!='lobe': # pat_28 should be in testing dataset.
+        SEED = 47
+        random.seed(SEED)
+        random.shuffle(ct_names)
+        random.seed(SEED)
+        random.shuffle(gdth_names)
 
         train_frac, val_frac, test_frac = 0.7, 0.1, 0.2
         data_len = len(gdth_names)
@@ -659,8 +625,13 @@ class TaskArgs:
         print(f"train_files: {train_files}")
         print(f"valid_files: {val_files}")
         print(f"test_files: {ts_files}")
-
-        return train_files, val_files
+        if return_mode == ('train', 'valid'):
+            return train_files, val_files
+        if return_mode == ('train', 'valid', 'test'):
+            return train_files, val_files, ts_files
+        else:
+            raise Exception(f"please give correct mode ('train', 'valid') or ('train', 'valid', 'test'), "
+                            f"instead of {return_mode}")
 
     def _dataloader(self, require_val=True):
         """Return train (and valid) dataloader.
@@ -798,48 +769,49 @@ class TaskArgs:
         self.net.train()
         t1 = time.time()
         if "yichao" in self.net_name:
-            print("yichao's net")
-            x = next(self.ini_loader)
-            print(f"x.shape: {x.shape}")
-            t3 = time.time()
-            # print(f"load data cost time: {t3 - t1}")
-            x = x.to(self.device)
-            y = self.net(x)  # now we have x and its gdth: y
-
-            t4 = time.time()
-            print(f"forward data cost time: {int(t4 - t3)}")
-            x = x.to("cpu")
-            if len(y) > 1:
-                y = y[0]
-            y = torch.argmax(y, dim=1)  # one hot decoding
-            y = torch.unsqueeze(y, dim=1)
-
-            y = y.to("cpu")
-            print(f"y.shape: {y.shape}")
-            x_Affined, y_Affined = cu.random_transform(x, y,
-                                                       rotation_range=0.1,
-                                                       height_shift_range=0.1,
-                                                       width_shift_range=0.1,
-                                                       shear_range=0.1,
-                                                       fill_mode='constant',
-                                                       zoom_range=0.2,
-                                                       prob=1)
-            if random.random() > 0.5:
-                noise = np.random.normal(0, 0.25, x_Affined.shape)
-                x_Affined += noise
-            x_Affined = x_Affined.to(self.device)
-            y_Affined = y_Affined.to(self.device)
-            x_Affined = x_Affined.float()
-            y_Affined = y_Affined.float()
-
-            t5 = time.time()
-            print(f"transform data cost time: {int(t5 - t4)}")
-
-            pred = self.net(x_Affined)
-            if len(pred) > 1:
-                pred = pred[0]
-            print(f"pred.shape: {pred.shape}, y_Affined.shape: {y_Affined.shape}")
-            loss = self.criteria(pred, y_Affined)
+            pass
+            # print("yichao's net")
+            # x = next(self.ini_loader)
+            # print(f"x.shape: {x.shape}")
+            # t3 = time.time()
+            # # print(f"load data cost time: {t3 - t1}")
+            # x = x.to(self.device)
+            # y = self.net(x)  # now we have x and its gdth: y
+            #
+            # t4 = time.time()
+            # print(f"forward data cost time: {int(t4 - t3)}")
+            # x = x.to("cpu")
+            # if len(y) > 1:
+            #     y = y[0]
+            # y = torch.argmax(y, dim=1)  # one hot decoding
+            # y = torch.unsqueeze(y, dim=1)
+            #
+            # y = y.to("cpu")
+            # print(f"y.shape: {y.shape}")
+            # x_Affined, y_Affined = cu.random_transform(x, y,
+            #                                            rotation_range=0.1,
+            #                                            height_shift_range=0.1,
+            #                                            width_shift_range=0.1,
+            #                                            shear_range=0.1,
+            #                                            fill_mode='constant',
+            #                                            zoom_range=0.2,
+            #                                            prob=1)
+            # if random.random() > 0.5:
+            #     noise = np.random.normal(0, 0.25, x_Affined.shape)
+            #     x_Affined += noise
+            # x_Affined = x_Affined.to(self.device)
+            # y_Affined = y_Affined.to(self.device)
+            # x_Affined = x_Affined.float()
+            # y_Affined = y_Affined.float()
+            #
+            # t5 = time.time()
+            # print(f"transform data cost time: {int(t5 - t4)}")
+            #
+            # pred = self.net(x_Affined)
+            # if len(pred) > 1:
+            #     pred = pred[0]
+            # print(f"pred.shape: {pred.shape}, y_Affined.shape: {y_Affined.shape}")
+            # loss = self.criteria(pred, y_Affined)
         else:
 
             x, y = next(self.tra_gen)
@@ -930,9 +902,9 @@ class TaskArgs:
 
     def do_validation_if_need(self, net_ta_dict, idx_: int):
         if idx_ < int(args.step_nb * 0.8):
-            valid_period = args.valid_period1 * net_ta_dict[self.main_net_name].steps_per_epoch
+            valid_period = args.valid_period_step1
         else:
-            valid_period = args.valid_period2 * net_ta_dict[self.main_net_name].steps_per_epoch
+            valid_period = args.valid_period_step2
         # print(f"vallid period: {valid_period}")
         print('idx_', idx_)
         if idx_ % valid_period == (valid_period-1):
@@ -946,7 +918,7 @@ class TaskArgs:
     def get_infer_loader(self, transformmode="infer"):
         data_folder = args.infer_data_dir
         if data_folder in ['None', None]:
-            train_files, infer_files = self._get_file_names()
+            train_files, valid_files, infer_files = self._get_file_names(return_mode=('train', 'valid', 'test'))
             print('infered files:', infer_files)
         else:
             images = sorted(glob.glob(os.path.join(data_folder, "*_ct*")))
@@ -980,12 +952,12 @@ class TaskArgs:
             prediction_folder = os.path.join(self.ld_path.infer_pred_dir(), args.infer_data_dir.split("/")[-1])
         print(prediction_folder)
         inferer = get_inferer()
-        saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode
+        saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode , mode="nearest"
         with torch.no_grad():
             for infer_data in self.infer_loader:
                 logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
                 print(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
-                preds = inferer(infer_data[keys[0]].to(self.device), self.net)
+                # preds = inferer(infer_data[keys[0]].to(self.device), self.net)
                 if args.infer_4_times:
                     n = 1.0
                     for _ in range(4):
@@ -1011,6 +983,23 @@ class TaskArgs:
                     if not os.path.isdir(pbb_folder):
                         os.makedirs(pbb_folder)
                     np.save(npy_name, preds.cpu())
+
+
+                # if args.smooth_edge:
+                #     upsample = Resize(mode='linear', spatial_size=infer_data["image_meta_dict"]["spatial_shape"][0])
+                #
+                #     preds = (preds.argmax(dim=1, keepdims=True)).float()
+                #     preds = one_hot(preds, num_classes=self.n_classes, dim=1)
+                #     preds = upsample(preds)
+                #     preds[preds>=0.5] = 1
+                #     preds[preds<0.5] = 0
+                #     preds = (preds.argmax(dim=1, keepdims=True)).float()
+                #     preds_ori_size = []
+                #     for img in preds_hot[0]:
+                #         tmp = upsample(img)
+                #         preds_ori_size.append(tmp)
+
+
                 preds = (preds.argmax(dim=1, keepdims=True)).float()
                 saver.save_batch(preds, infer_data["image_meta_dict"])
 
@@ -1018,13 +1007,11 @@ class TaskArgs:
         if not os.path.exists(prediction_folder):
             os.makedirs(prediction_folder)
         # files = glob.glob(os.path.join(prediction_folder,"*", "*.nii.gz"))
-        files = get_all_ct_names(os.path.join(prediction_folder,"*"), name_suffix="_ct_seg")
+        files = get_all_ct_names(os.path.join(prediction_folder,"*"), suffix="_ct_seg")
 
         for f in files:
             new_name = os.path.basename(f)
             new_name = new_name.split("_ct")[0] + new_name.split("_ct")[1]
-            # new_name = new_name[len("volume-covid19-A-0"):]
-            # new_name = new_name[: -len("_ct_seg.nii.gz")] + ".nii.gz"
             to_name = os.path.join(prediction_folder, new_name )
             shutil.move(f, to_name)
             parent_dir = pathlib.Path(f).parent.absolute()  # remove the empty directory after move its file
@@ -1044,7 +1031,22 @@ class TaskArgs:
         #                                pred_path=pred_file,
         #                                csv_file=csv_file)
         #     print('metrics: ', metrics)
+        if self.task=='lobe':
+            write_connected_lobes(prediction_folder, workers=6, target_dir=prediction_folder + "/largest_connected")
 
-        # if "lung" in self.net_name:
-        #
-        #     write_connected_lobes(preds_dir, workers=5, target_dir=preds_dir + "/biggest_parts")
+            metrics = sg.write_metrics(labels=[1, 2, 3, 4, 5],  # exclude background
+                                       gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/correct_lobe_seg_valid_seed47',
+                                       pred_path=prediction_folder ,
+                                       csv_file=prediction_folder + "/metrics_on_lobe.csv",
+                                       metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
+            metrics = sg.write_metrics(labels=[1, 2, 3, 4, 5],  # exclude background
+                                       gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/correct_lobe_seg_valid_seed47',
+                                       pred_path=prediction_folder + "/largest_connected",
+                                       csv_file=prediction_folder + "/largest_connected/metrics_on_lobe.csv",
+                                       metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
+        if self.task=='av':
+            metrics = sg.write_metrics(labels=[1, 2],  # exclude background
+                                       gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/av',
+                                       pred_path=prediction_folder,
+                                       csv_file=prediction_folder + '/metrics_on_av.csv',
+                                       metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
