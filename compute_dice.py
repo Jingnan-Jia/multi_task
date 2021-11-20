@@ -4,23 +4,23 @@
 # @Email   : jiajingnan2222@gmail.com
 import seg_metrics.seg_metrics as sg
 
-labels = [0, 1]
+labels = [0, 1, 2, 3, 4, 5]
     # '/data/jjia/monai/COVID-19-20_v2/Train/seg'
 # pred_path = '/data/jjia/monai/output_train/to_submit'
 gdth_path = "/data/jjia/monai/data_ori_space/lola11"
 pred_path_first = "/data/jjia/monai/models/lobe/"
-pred_path_middles = ["1610983656_838",
-                     "1610983655_386",
-                     "1610983655_203",
-                     "1610983655_428",
-                     "1611151945_187",
-                     "1611151945_114",
-                     "1611151945_179",
-                     "1611151945_514",
-                     "1611152191_525",
-                     "1611152191_177",
-                     "1611152190_335",
-                     "1611152191_299"
+pred_path_middles = ["64",
+                     "61",
+                     "66",
+                     "65",
+                     "57",
+                     "58",
+                     "60",
+                     "59",
+                     "62",
+                     "63",
+                     "67",
+                     "68"
 
                      ]
 pred_path_last = "/infer_pred/lola11/to_submit"
