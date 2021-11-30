@@ -19,7 +19,10 @@ from torch.utils.data import WeightedRandomSampler
 
 from mt.mymodules.mypath import Mypath as Path
 from mt.mymodules.mypath import PathInit
+import threading
+import copy
 
+lock_thread = threading.Lock()  # for record
 # class RecordThread(threading.Thread):
 #     def __init__(self, *args, **kargs):
 #         super().__init__(*args, **kargs)
@@ -28,47 +31,52 @@ from mt.mymodules.mypath import PathInit
 #     def run(self):
 
 
-def write_record(record_file, current_id, mypath, log_dict, args):
+def write_record(record_file, current_id, new_tp: tuple):
     """
     Compared with record_end, this function aims to write the records to excel without "best metrics" and "end time".
     """
 
     lock = FileLock(record_file + ".lock")
     with lock:  # with this lock,  open a file for exclusive access
-        print("record path", os.path.realpath(record_file))
-        df = pd.read_csv(os.path.realpath(record_file), delimiter=',')
-        print('df', df)
-        index = df.index[df['ID'] == current_id].to_list()
-        if len(index) > 1:
-            raise Exception("over 1 row has the same id", id)
-        elif len(index) == 0:  # only one line,
-            index = 0
-        else:
-            index = index[0]
+        with lock_thread:
+            print("record path", os.path.realpath(record_file))
+            df = pd.read_csv(os.path.realpath(record_file), delimiter=',')
+            print('df read in write_record function', df)
+            index = df.index[df['ID'] == current_id].to_list()
+            if len(index) > 1:
+                raise Exception("over 1 row has the same id", id)
+            elif len(index) == 0:  # only one line,
+                index = 0
+            else:
+                index = index[0]
+            df.loc[index, new_tp[0]] = new_tp[1]
+            #
+            # for key, value in log_dict.items():  # convert numpy to str before writing all self.log_dict to csv file
+            #     if type(value) in [np.ndarray, list]:
+            #         str_v = ''
+            #         for v in value:
+            #             str_v += str(v)
+            #             str_v += '_'
+            #         value = str_v
+            #     df.loc[index, key] = value
+            #     if type(value) is int:
+            #         df[key] = df[key].astype('Int64')
 
-        for key, value in log_dict.items():  # convert numpy to str before writing all self.log_dict to csv file
-            if type(value) in [np.ndarray, list]:
-                str_v = ''
-                for v in value:
-                    str_v += str(v)
-                    str_v += '_'
-                value = str_v
-            df.loc[index, key] = value
-            if type(value) is int:
-                df[key] = df[key].astype('Int64')
+            # for column in df:
+            #     if type(df[column].to_list()[-1]) is int:
+            #         df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
 
-        # for column in df:
-        #     if type(df[column].to_list()[-1]) is int:
-        #         df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
+            # args_dict = copy.deepcopy(vars(args))
+            # args_dict.update({'ID': current_id})
+            # for column in df:
+            #     if column in args_dict.keys() and type(args_dict[column]) is int:
+            #         df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
+            df.to_csv(record_file, index=False)
+            shutil.copy(record_file, os.path.join(os.path.dirname(record_file),
+                                                  'cp_' + os.path.basename(record_file)))
 
-        args_dict = vars(args)
-        args_dict.update({'ID': current_id})
-        # for column in df:
-        #     if column in args_dict.keys() and type(args_dict[column]) is int:
-        #         df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
-        write_and_backup(df, record_file, mypath)
-        print("Write record successfully for one time!")
-        return None
+            print("Write record successfully for one time!")
+            return None
 
 
 class Tracker():
@@ -84,11 +92,12 @@ class Tracker():
         """
         record the current log_dict
         """
-        self.log_dict[key] = values
+        new_tp = (key, values)
         # record_thread = RecordThread()
-        mypath = Path(self.current_id, task=self.task_name, data_path=self.data_path, check_id_dir=False)
+        print(f"start record in another thread. self.record_file, self.current_id, new_tp"
+              f" {self.record_file, self.current_id, new_tp }")
         record_thread = threading.Thread(target=write_record,
-                                         args=(self.record_file, self.current_id, mypath, self.log_dict, self.args, ))
+                                         args=(self.record_file, self.current_id, new_tp, ))
         record_thread.start()
 
 
@@ -110,8 +119,13 @@ class Tracker():
         lock = FileLock(self.record_file + ".lock")  # lock the file, avoid other processes write other things
         with lock:  # with this lock,  open a file for exclusive access
             with open(self.record_file, 'a'):
+                print('self.recordfile: ')
+                print(self.record_file)
                 df, new_id = get_df_id(self.record_file)
                 self.current_id = new_id
+                print(f"new id : {new_id}")
+                print('df')
+                print(df)
                 if args.mode == 'train':
                     mypath = Path(new_id,task=self.task_name, data_path='data_ori_space',  check_id_dir=True)  # to check if id_dir already exist
                 else:
@@ -121,13 +135,18 @@ class Tracker():
                 start_time = datetime.datetime.now().time().strftime("%H:%M:%S")
                 # start record by id, date,time row = [new_id, date, time, ]
                 idatime = {'ID': new_id, 'start_date': start_date, 'start_time': start_time}
-                args_dict = vars(args)
+                print(f'idatime: {idatime}')
+                args_dict = copy.deepcopy(vars(args))
                 idatime.update(args_dict)  # followed by super parameters
+                print(f'idatime second: {idatime}')
 
                 if len(df) == 0:  # empty file
                     df = pd.DataFrame([idatime])  # need a [] , or need to assign the index for df
                 else:
                     index = df.index.to_list()[-1]  # last index
+                    print(f'index: {index}')
+                    print('df second')
+                    print(df)
                     for key, value in idatime.items():  # write new line
                         if type(value) is int:  # convert thoes values which should be int to int.
                             try:
@@ -139,9 +158,12 @@ class Tracker():
                         except:
                             df[key] = df[key].astype('object')
                             df.at[index + 1, key] = value  #
-
+                print('df third')
+                print(df)
                 df = fill_running(df)  # fill the state information for other experiments
-                df = correct_type(df)  # aviod annoying thing like: ID=1.00
+                # df = correct_type(df)  # aviod annoying thing like: ID=1.00
+                print('df forth')
+                print(df)
                 write_and_backup(df, self.record_file, mypath)
         return new_id
 
@@ -194,18 +216,22 @@ class Tracker():
                         str_v += '_'
                     value = str_v
                 df.loc[index, key] = value
-                if type(value) is int:  # this line may introduce runtime error.
-                    df[key] = df[key].astype('Int64')
+                if type(value) is int:  # convert thoes values which should be int to int.
+                    try:
+                        df[key] = df[key].astype('Int64')
+                    except KeyError:  # this key is not in the df
+                        pass
 
-            for column in df:
-                if type(df[column].to_list()[-1]) is int:
-                    df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
 
-            args_dict = vars(self.args)
+            # for column in df:
+            #     if type(df[column].to_list()[-1]) is int:
+            #         df[column] = df[column].astype('Int64')  # correct type again, avoid None/1.00/NAN, etc.
+
+            args_dict = copy.deepcopy(vars(self.args))
             args_dict.update({'ID': self.current_id})
-            for column in df:
-                if column in args_dict.keys() and type(args_dict[column]) is int:
-                    df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
+            # for column in df:
+            #     if column in args_dict.keys() and type(args_dict[column]) is int:
+            #         df[column] = df[column].astype(float).astype('Int64')  # correct str to float and then int
             write_and_backup(df, self.record_file, mypath)
 
 
@@ -322,6 +348,8 @@ def write_and_backup(df: pd.DataFrame, record_file: str, mypath: Path) -> None:
         :func:`ssc_scoring.mymodules.tool.record_1st` and :func:`ssc_scoring.mymodules.tool.record_2nd`
 
     """
+    print('df in write write_and_backup')
+    print(df)
     df.to_csv(record_file, index=False)
     shutil.copy(record_file, os.path.join(os.path.dirname(record_file),
                                           'cp_' + os.path.basename(record_file)))
@@ -401,6 +429,9 @@ def get_df_id(record_file: str) -> Tuple[pd.DataFrame, int]:
         df = pd.read_csv(record_file)  # read the record file,
         last_id = df['ID'].to_list()[-1]  # find the last ID
         new_id = int(last_id) + 1
+    print(f'record file: {record_file}')
+    print('loaded df')
+    print(df)
     return df, new_id
 
 
@@ -507,3 +538,5 @@ def record_gpu_info(outfile) -> Tuple:
     else:
         print('outfile is None, can not show GPU memory info')
         return None, None, None
+
+
