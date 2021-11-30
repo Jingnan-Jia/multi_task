@@ -8,7 +8,34 @@ from scipy import spatial, ndimage
 from skimage.measure import label
 import scipy
 from medutils.medutils import get_all_ct_names, execute_the_function_multi_thread, save_itk, load_itk
+import torch
+from monai.networks import one_hot
+import time
 
+def smooth_edge(img, nb_classes=6, kernel_size: tuple =(4, 4, 6), threshold=0.4):
+    t1 = time.time()
+    print(f"start smooth edge")
+    img = img[None]  # add a channel dimension
+    img_one_hot = one_hot(torch.tensor(img), num_classes=nb_classes, dim=0)
+    conv = torch.nn.Conv3d(in_channels=1, out_channels=1, kernel_size=kernel_size, padding='same', bias=False)
+    conv.weight = torch.nn.Parameter(torch.ones((1, 1, *kernel_size)) / np.prod(kernel_size))
+
+    im_tensor_ = torch.zeros((img_one_hot.shape))
+    for idx, im in enumerate(img_one_hot):
+        im = im[None][None]
+        im_conv = conv(im)
+        im_tensor_[idx] = im_conv[0][0]
+
+    im_tensor = im_tensor_.clone().detach()
+    # for im in im_ls:
+    im_tensor[im_tensor > threshold] = 1
+    im_tensor[im_tensor < threshold] = 0
+
+    out = (im_tensor.argmax(dim=0, keepdims=False)).float()
+    out_np = out.detach().numpy()
+    t2 = time.time()
+    print(f"finish a smooth, cost {int(t2-t1)} seconds")
+    return out_np
 
 
 def nerest_dis_to_center(img):
@@ -144,7 +171,7 @@ def largest_connected_parts(bw_img, nb_need_saved=1):
     return bw_img
 
 
-def write_connected_lobes(pred_file_dir, workers=10, target_dir=None):
+def write_connected_lobes(pred_file_dir, workers=10, target_dir=None, smooth=False):
     scan_files = get_all_ct_names(pred_file_dir)
 
     def write_connected_lobe(mylock):  # neural network inference needs GPU which can not be computed by multi threads, so the
@@ -163,7 +190,11 @@ def write_connected_lobes(pred_file_dir, workers=10, target_dir=None):
                 t1 = time.time()
                 print(threading.current_thread().name + "is computing ...")
                 pred, pred_origin, pred_spacing = load_itk(ct_fpath, require_ori_sp=True)
-                pred = largest_connected_parts(pred, nb_need_saved=5)
+                nb_need_saved = 5
+
+                pred = largest_connected_parts(pred, nb_need_saved=nb_need_saved)
+                if smooth:
+                    pred = smooth_edge(pred, nb_classes= nb_need_saved + 1)
                 suffex_len = len(os.path.basename(ct_fpath).split(".")[-1])
                 if target_dir:
                     new_dir = target_dir
