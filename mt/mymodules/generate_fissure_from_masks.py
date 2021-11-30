@@ -4,8 +4,10 @@ import SimpleITK as sitk
 import copy
 import threading
 import time
-from medutils.medutils import get_all_ct_names, execute_the_function_multi_thread
-
+from medutils.medutils import get_all_ct_names, execute_the_function_multi_thread, load_itk, save_itk
+import glob
+from tqdm import tqdm
+import os
 
 def get_fissure(scan, radiusValue=3, labels=None):
     lobe_4 = copy.deepcopy(scan)
@@ -130,6 +132,28 @@ def gntFissure(Absdir, radiusValue=3, workers=10, number=None, labels=None):
                 return None
 
     execute_the_function_multi_thread(consumer, workers=workers)
+
+
+def gnt_lola11_style_fissure(gdth_folder, pred_folder):
+    """
+    gdth_folder and pred_folder must include fissure segmentation files with the name *fissure_1_seg.nii.gz
+    """
+    gdth_files = sorted(glob.glob(gdth_folder + "/*fissure_1_seg.nii.gz"))
+    pred_files = sorted(glob.glob(pred_folder + "/*fissure_1_seg.nii.gz"))
+    for gdth_file, pred_file in tqdm(zip(gdth_files, pred_files), total=len(gdth_files)):
+        gdth, ori, sp = load_itk(gdth_file, require_ori_sp=True)
+        pred, ori, sp = load_itk(pred_file, require_ori_sp=True)
+        gdth = np.rollaxis(gdth, 1, 0)
+        pred = np.rollaxis(pred, 1, 0)
+        fissure_points = np.zeros_like(gdth)
+        for idx, (gdth_slice, pred_slice) in enumerate(zip(gdth, pred)):
+            if np.any(gdth_slice):
+                fissure_points[idx] = pred_slice
+        fissure_points = np.rollaxis(fissure_points, 1, 0)  # roll axis back
+        save_dir = pred_folder + "/points"
+        if not os.path.isdir(save_dir):
+            os.mkdir(save_dir)
+        save_itk(save_dir + '/' + os.path.basename(gdth_file), fissure_points, ori, sp)
 
 
 
