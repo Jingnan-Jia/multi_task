@@ -26,7 +26,8 @@ from torch import nn as nn
 from mt.mymodules.tool import Tracker
 from medutils.medutils import get_all_ct_names, load_itk, save_itk
 from mt.mymodules.largest_connected_parts import write_connected_lobes
-
+from mt.mymodules.generate_fissure_from_masks import gntFissure, gntLung, gnt_lola11_style_fissure
+from mt.mymodules.av_seg_masked_by_lung import av_seg_masked_by_lung
 from mt.mymodules.mypath import Mypath
 from mt.mymodules.set_args_mtnet import get_args
 from mt.mymodules.data import inifite_generator
@@ -608,7 +609,7 @@ class TaskArgs:
             self.n_train: int = tr_nb
 
         if self.net_name != self.main_net_name:
-            self.n_val: int = min(5, vd_nb)
+            self.n_val: int = min(1, vd_nb)  # do not waste time on aux task validation
         else:
             # self.n_val: int = min(total_nb - self.n_train, int(val_frac * total_nb))
             self.n_val: int = vd_nb
@@ -643,6 +644,7 @@ class TaskArgs:
         ct_name_list: List[str]
         gdth_name_list: List[str]
         train_files, val_files = self._get_file_names()
+
         # train_files, val_files = train_files[:2], val_files[:2]
 
         train_transforms = self._get_xforms("train")
@@ -909,7 +911,7 @@ class TaskArgs:
         print('idx_', idx_)
         if idx_ % valid_period == (valid_period-1):
             print("start do validation")
-            if "net_recon" not in self.net_name:
+            if self.net_name == self.main_net_name:
                 print('start evaluate')
                 t1 = time.time()
                 self.evaluator.run()
@@ -953,6 +955,7 @@ class TaskArgs:
         print(prediction_folder)
         inferer = get_inferer()
         saver = monai.data.NiftiSaver(output_dir=prediction_folder, mode="nearest")  # todo: change mode , mode="nearest"
+        # if 1:
         with torch.no_grad():
             for infer_data in self.infer_loader:
                 logging.info(f"segmenting {infer_data['image_meta_dict']['filename_or_obj']}")
@@ -983,22 +986,6 @@ class TaskArgs:
                     if not os.path.isdir(pbb_folder):
                         os.makedirs(pbb_folder)
                     np.save(npy_name, preds.cpu())
-
-
-                # if args.smooth_edge:
-                #     upsample = Resize(mode='linear', spatial_size=infer_data["image_meta_dict"]["spatial_shape"][0])
-                #
-                #     preds = (preds.argmax(dim=1, keepdims=True)).float()
-                #     preds = one_hot(preds, num_classes=self.n_classes, dim=1)
-                #     preds = upsample(preds)
-                #     preds[preds>=0.5] = 1
-                #     preds[preds<0.5] = 0
-                #     preds = (preds.argmax(dim=1, keepdims=True)).float()
-                #     preds_ori_size = []
-                #     for img in preds_hot[0]:
-                #         tmp = upsample(img)
-                #         preds_ori_size.append(tmp)
-
 
                 preds = (preds.argmax(dim=1, keepdims=True)).float()
                 saver.save_batch(preds, infer_data["image_meta_dict"])
@@ -1033,20 +1020,36 @@ class TaskArgs:
         #     print('metrics: ', metrics)
         if self.task=='lobe':
             write_connected_lobes(prediction_folder, workers=6, target_dir=prediction_folder + "/largest_connected")
+            gntFissure(prediction_folder+ "/largest_connected", radiusValue=1, workers=5, labels=[1, 2, 3, 4, 5])  # lobe has their corresponding fissure
 
-            metrics = sg.write_metrics(labels=[1, 2, 3, 4, 5],  # exclude background
-                                       gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/correct_lobe_seg_valid_seed47',
-                                       pred_path=prediction_folder ,
-                                       csv_file=prediction_folder + "/metrics_on_lobe.csv",
-                                       metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
-            metrics = sg.write_metrics(labels=[1, 2, 3, 4, 5],  # exclude background
-                                       gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/lobe/correct_lobe_seg_valid_seed47',
+            if 'lola11' not in prediction_folder: # GLUCOLD
+                sg.write_metrics(labels=[1, 2, 3, 4, 5],  # exclude background
+                                       gdth_path=self.ld_path.data_task_dir + '/lobe_seg_test_seed47',
                                        pred_path=prediction_folder + "/largest_connected",
-                                       csv_file=prediction_folder + "/largest_connected/metrics_on_lobe.csv",
-                                       metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
+                                       csv_file=prediction_folder + "/largest_connected/metrics_on_lobe.csv")
+                sg.write_metrics(labels=[1],  # glucold
+                                 gdth_path=self.ld_path.data_task_dir + '/fissure_seg_test_seed47',
+                                 pred_path=prediction_folder + "/largest_connected",
+                                 csv_file=prediction_folder + "/largest_connected/metrics_on_fissure.csv")
+            else:
+                gnt_lola11_style_fissure(gdth_folder=self.ld_path.data_path + '/lola11',
+                                         pred_folder=prediction_folder + "/largest_connected")
+                sg.write_metrics(labels=[1],  # lola11
+                             gdth_path=self.ld_path.data_path + '/lola11',
+                             pred_path=prediction_folder + "/largest_connected/points",
+                             csv_file=prediction_folder + "/largest_connected/points/metrics_on_fissure.csv")
+
         if self.task=='av':
-            metrics = sg.write_metrics(labels=[1, 2],  # exclude background
+            sg.write_metrics(labels=[1, 2],  # exclude background
                                        gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/av',
                                        pred_path=prediction_folder,
                                        csv_file=prediction_folder + '/metrics_on_av.csv',
                                        metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd', 'mdsd', 'stdsd'])
+            av_seg_masked_by_lung(args.ld_av)
+            pred_path_new = "/data/jjia/multi_task/mt/scripts/results/av/" + args.ld_av + "/infer_pred/SYSU/av_masked_by_lung"
+            sg.write_metrics(labels=[1, 2],  # exclude background
+                             gdth_path='/data/jjia/multi_task/mt/scripts/data/data_ori_space/av',
+                             pred_path=pred_path_new,
+                             csv_file=pred_path_new + '/metrics_on_av.csv',
+                             metrics=['dice', 'jaccard', 'precision', 'recall', 'fpr', 'fnr', 'vs', 'hd', 'hd95', 'msd',
+                                      'mdsd', 'stdsd'])
